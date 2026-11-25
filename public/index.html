@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RM6 Pink Album</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+  <script src="/qr.js" defer></script>
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <!-- Minimal Top Bar with Separate Search vs Upload Menu -->
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <div class="brand-dot">🌸</div>
+        <h1 class="brand-title" id="albumTitleHeading">RM6 Pink Album</h1>
+      </div>
+
+      <nav class="nav-center" aria-label="เมนูหลัก">
+        <button class="nav-tab active" id="tabBtnSearch" data-tab="search" type="button">
+          🔍 ค้นหารูป
+        </button>
+        <button class="nav-tab" id="tabBtnUpload" data-tab="upload" type="button">
+          📤 อัปโหลดรูป
+        </button>
+      </nav>
+
+      <div class="topbar-actions">
+        <button class="btn btn-ghost" id="btnOpenQr" type="button" title="QR Code">QR</button>
+        <button class="btn btn-ghost" id="btnOpenConfig" type="button" title="ตั้งค่า">⚙️</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="main-wrap">
+    <!-- TAB 1 (DEFAULT): SEARCH & ATTENDEE GALLERY -->
+    <div id="viewSearch" style="display: flex; flex-direction: column; gap: 12px;">
+      <!-- Minimal Face Search Card -->
+      <section class="surface-card search-bar-card">
+        <div class="search-top-row">
+          <div class="search-main-btns">
+            <button class="btn btn-primary btn-selfie-hero" id="btnOpenSelfieCamera" type="button">
+              🤳 ถ่ายเซลฟีค้นหารูป
+            </button>
+            <button class="btn btn-soft" id="btnPickQueryFace" type="button">
+              🖼️ เลือกรูปใบหน้า
+            </button>
+            <button class="btn btn-danger-soft" id="btnClearFaceFilter" type="button" hidden>
+              ✕ ล้างการค้นหา
+            </button>
+          </div>
+
+          <div class="status-badges">
+            <span class="dot-badge" id="aiEngineStatus">กำลังโหลด AI...</span>
+            <span class="dot-badge gemini-on" id="geminiBadge" hidden>✨ Gemini พร้อมใช้</span>
+          </div>
+        </div>
+
+        <!-- Explicit Search Engine Selector & Sensitivity -->
+        <div class="engine-switch-bar">
+          <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+            <span style="font-size: 0.8rem; color: var(--text-muted); font-weight: 500;">ระบบค้นหา:</span>
+            <div class="engine-pills" role="group" aria-label="เลือกระบบค้นหาใบหน้า">
+              <button class="engine-pill active-hog" id="btnModeArcface" type="button">🎯 ArcFace 512-D</button>
+              <button class="engine-pill" id="btnModeGemini" type="button">✨ ArcFace + Gemini</button>
+            </div>
+          </div>
+
+          <div class="sensitivity-row">
+            <span>ความเข้มงวด: <strong id="thresholdValueLabel">0.40</strong></span>
+            <input type="range" id="thresholdSlider" min="0.28" max="0.55" step="0.01" value="0.40" />
+          </div>
+        </div>
+
+        <!-- Hidden Inputs for Native Mobile Selfie Capture & Gallery Face Pick -->
+        <input type="file" id="fileInputSelfieCapture" accept="image/*" capture="user" hidden />
+        <input type="file" id="fileInputQueryFace" accept="image/*" hidden />
+
+        <!-- Active Search / Cluster Filter Chip -->
+        <div class="active-search-bar" id="activeSearchBar" hidden>
+          <div class="active-search-info">
+            <img class="active-search-thumb" id="queryFacePreviewImg" src="" alt="" hidden />
+            <div>
+              <div class="active-search-text" id="activeFilterTitle">ผลการค้นหา</div>
+              <div id="activeEngineTagWrap"></div>
+              <div class="active-search-sub" id="activeFilterSub"></div>
+            </div>
+          </div>
+          <button class="btn btn-danger-soft" id="btnClearSearchBanner" type="button">
+            ✕ ดูรูปทั้งหมด
+          </button>
+        </div>
+      </section>
+
+      <!-- People Face Clusters -->
+      <section class="surface-card" id="clusterSection">
+        <div class="section-head">
+          <h2 class="section-title">บุคคลในงาน (<span id="statTotalClusters">0</span>)</h2>
+          <button class="btn btn-ghost" id="btnReindexUnindexed" type="button" style="font-size: 0.76rem; padding: 4px 10px;" hidden>
+            ⚡ สแกนค้าง (<span id="unindexedCountSpan">0</span>)
+          </button>
+        </div>
+        <div class="cluster-strip" id="clusterStrip"></div>
+      </section>
+
+      <!-- Photo Grid -->
+      <section class="surface-card">
+        <div class="gallery-bar">
+          <div class="gallery-count">
+            รูปภาพ <strong id="visibleCountSpan">0</strong> / <span id="statTotalPhotos">0</span>
+          </div>
+          <div class="gallery-actions">
+            <button class="btn btn-ghost" id="btnSelectAllVisible" type="button">เลือกทั้งหมด</button>
+            <button class="btn btn-primary" id="btnDownloadZip" type="button" disabled>
+              โหลด ZIP (<span id="selectedCountSpan">0</span>)
+            </button>
+          </div>
+        </div>
+
+        <div class="photo-grid" id="photoGrid"></div>
+
+        <div class="empty-state" id="emptyState">
+          ยังไม่มีรูปภาพที่แสดง
+        </div>
+      </section>
+    </div>
+
+    <!-- TAB 2: UPLOAD & GOOGLE DRIVE SYNC (Separate Menu) -->
+    <section class="surface-card" id="viewUpload" hidden>
+      <div class="upload-box" id="uploadDropzone">
+        <div style="font-size: 1.8rem; margin-bottom: 6px;">📤</div>
+        <div style="font-weight: 600; font-size: 0.96rem;">อัปโหลดรูปเข้าอัลบั้มกลาง</div>
+        <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 2px;">
+          มือถือ หรือ Card Reader บนคอมพิวเตอร์
+        </div>
+
+        <div class="upload-actions">
+          <button class="btn btn-primary" id="btnMobileUpload" type="button">
+            📱 เลือกรูป / ถ่ายภาพ
+          </button>
+          <button class="btn btn-soft" id="btnFolderUpload" type="button">
+            🗂️ เลือกทั้งโฟลเดอร์ (Card Reader)
+          </button>
+        </div>
+
+        <input type="file" id="fileInputMultiple" accept="image/*" multiple hidden />
+        <input type="file" id="fileInputFolder" accept="image/*" webkitdirectory directory multiple hidden />
+      </div>
+
+      <div class="progress-box" id="uploadProgressBox" hidden>
+        <div id="uploadProgressText">กำลังอัปโหลด...</div>
+        <div class="progress-track">
+          <div class="progress-fill" id="uploadProgressBar"></div>
+        </div>
+      </div>
+
+      <div class="upload-subbar">
+        <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 0.82rem; color: var(--text-muted);">
+          <span id="statDriveStatus">Google Drive</span>
+          <span>•</span>
+          <span id="statHogStatus">ArcFace 512-D</span>
+          <a id="driveFolderBadge" class="btn btn-ghost" href="#" target="_blank" rel="noopener" style="font-size: 0.78rem; padding: 4px 10px;" hidden>
+            เปิดโฟลเดอร์ ↗
+          </a>
+        </div>
+        <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+          <button class="btn btn-ghost" id="btnAnalyzeHogFolder" type="button">
+            🎯 สแกนใบหน้าทั้งโฟลเดอร์ใหม่
+          </button>
+          <button class="btn btn-soft" id="btnSyncDrive" type="button">
+            🔄 ซิงก์ Google Drive
+          </button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Developer Credit Footer -->
+  <footer class="site-footer">
+    ผู้พัฒนา นายพรชาย วงศ์กระจ่าง ธนาคารออมสินภาค 6
+  </footer>
+
+  <!-- Modal 1: Settings (Google Drive + Gemini API Key) -->
+  <div class="modal-backdrop" id="configModal" hidden>
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3>⚙️ ตั้งค่าระบบ</h3>
+        <button class="close-btn" data-close-modal="configModal" type="button">✕</button>
+      </div>
+
+      <form id="configForm">
+        <div class="form-group">
+          <label for="inputAlbumTitle">ชื่ออัลบั้ม</label>
+          <input type="text" id="inputAlbumTitle" placeholder="RM6 Pink Album" />
+        </div>
+
+        <div class="form-group">
+          <label for="inputGeminiApiKey">Gemini API Key (วิเคราะห์ใบหน้าแม่นยำสูง)</label>
+          <div style="display: flex; gap: 6px;">
+            <input type="password" id="inputGeminiApiKey" placeholder="AIzaSy... หรือ AQ..." autocomplete="off" style="flex: 1;" />
+            <button class="btn btn-soft" id="btnTestGeminiKey" type="button" style="white-space: nowrap; padding: 6px 12px; font-size: 0.8rem;">
+              ทดสอบคีย์
+            </button>
+          </div>
+          <div id="geminiTestResult" style="font-size: 0.78rem; margin-top: 5px;" hidden></div>
+        </div>
+
+        <div class="form-group">
+          <label for="inputDefaultEngineMode">ระบบวิเคราะห์และค้นหาใบหน้าเริ่มต้น</label>
+          <select id="inputDefaultEngineMode">
+            <option value="arcface">🎯 ArcFace 512-D (แนะนำ — เร็ว ฟรี แม่นยำสูง)</option>
+            <option value="arcface_gemini">✨ ArcFace + Gemini AI (ช่วยยืนยันเคสก้ำกึ่ง)</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="inputDriveFolderUrl">ลิงก์ Google Drive Folder กลาง</label>
+          <input type="text" id="inputDriveFolderUrl" placeholder="https://drive.google.com/drive/folders/..." />
+        </div>
+
+        <details style="margin-bottom: 14px; font-size: 0.82rem; color: var(--text-muted);">
+          <summary style="cursor: pointer; font-weight: 500; margin-bottom: 8px;">ตั้งค่าขั้นสูง (เชื่อม Google Drive / สแกนใบหน้าใหม่)</summary>
+          <div class="form-group">
+            <label for="inputOauthClientId">Google OAuth Client ID (สำหรับส่งรูปเข้า Drive ส่วนตัว)</label>
+            <input type="text" id="inputOauthClientId" placeholder="xxxx.apps.googleusercontent.com" />
+          </div>
+          <div class="form-group">
+            <label for="inputOauthClientSecret">Google OAuth Client Secret</label>
+            <input type="password" id="inputOauthClientSecret" placeholder="GOCSPX-..." autocomplete="off" />
+          </div>
+          <div style="margin-bottom: 12px;">
+            <button class="btn btn-soft" id="btnConnectGoogleOauth" type="button" style="width: 100%;">
+              🔗 ล็อกอินบัญชี Google เจ้าของโฟลเดอร์
+            </button>
+          </div>
+          <div class="form-group">
+            <label for="inputServiceAccountJson">Google Service Account JSON (สำหรับดึงรูปจาก Drive)</label>
+            <textarea id="inputServiceAccountJson" rows="2" placeholder="เว้นว่างไว้หากตั้งค่าแล้ว"></textarea>
+          </div>
+          <button class="btn btn-ghost" id="btnResetAllFaces" type="button" style="width: 100%;">
+            🔄 สแกนใบหน้ารูปเดิมในอัลบั้มใหม่ทั้งหมด
+          </button>
+        </details>
+
+        <div style="display: flex; justify-content: flex-end; gap: 8px;">
+          <button class="btn btn-ghost" data-close-modal="configModal" type="button">ยกเลิก</button>
+          <button class="btn btn-primary" type="submit">บันทึก</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal 2: QR Code -->
+  <div class="modal-backdrop" id="qrModal" hidden>
+    <div class="modal-box" style="text-align: center;">
+      <div class="modal-header">
+        <h3>QR Code เข้าอัลบั้ม</h3>
+        <button class="close-btn" data-close-modal="qrModal" type="button">✕</button>
+      </div>
+      <div style="background: var(--pink-50); padding: 14px; border-radius: 14px; display: inline-block;">
+        <canvas id="qrCanvas" width="220" height="220"></canvas>
+      </div>
+      <div style="margin-top: 10px;">
+        <input
+          type="text"
+          id="qrUrlInput"
+          style="width: 100%; text-align: center; padding: 7px; border-radius: 8px; border: 1px solid var(--border); font-size: 0.82rem;"
+        />
+      </div>
+      <div style="display: flex; justify-content: center; gap: 8px; margin-top: 12px;">
+        <button class="btn btn-ghost" id="btnCopyQrLink" type="button">คัดลอกลิงก์</button>
+        <button class="btn btn-primary" id="btnDownloadQrPng" type="button">โหลด QR</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal 3: Live Selfie Camera (HTTPS / localhost) -->
+  <div class="modal-backdrop" id="selfieModal" hidden>
+    <div class="modal-box" style="text-align: center;">
+      <div class="modal-header">
+        <h3>ถ่ายเซลฟีค้นหารูป</h3>
+        <button class="close-btn" id="btnCloseSelfieModal" type="button">✕</button>
+      </div>
+      <div class="camera-stage">
+        <video id="selfieVideo" autoplay playsinline muted></video>
+        <div class="face-guide-oval"></div>
+      </div>
+      <div style="display: flex; justify-content: center; gap: 8px; margin-top: 12px;">
+        <button class="btn btn-primary" id="btnCaptureSelfie" type="button">📸 ถ่ายภาพค้นหา</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal 4: Lightbox -->
+  <div class="modal-backdrop" id="lightboxModal" hidden>
+    <div class="modal-box lightbox-box">
+      <div class="modal-header">
+        <h3 id="lightboxTitle" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">รูปภาพ</h3>
+        <button class="close-btn" data-close-modal="lightboxModal" type="button">✕</button>
+      </div>
+      <div class="lightbox-stage">
+        <div class="lightbox-img-wrap" id="lightboxImgWrap">
+          <img id="lightboxImg" src="" alt="Preview" />
+          <div id="lightboxFaceLayer"></div>
+        </div>
+      </div>
+      <div id="lightboxFaceHint" style="font-size: 0.78rem; color: var(--pink-600); margin-top: 8px;" hidden>
+        👆 แตะกรอบสีชมพูที่ใบหน้าเพื่อค้นหารูปทั้งหมดของคนนั้น
+      </div>
+      <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-top: 12px;">
+        <div id="lightboxMetaText" style="font-size: 0.8rem; color: var(--text-muted);"></div>
+        <div style="display: flex; gap: 6px;">
+          <a id="lightboxDriveLink" class="btn btn-ghost" href="#" target="_blank" rel="noopener" hidden>Google Drive</a>
+          <a id="lightboxDownloadLink" class="btn btn-primary" href="#" download>ดาวน์โหลด</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

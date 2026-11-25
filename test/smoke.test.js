@@ -1,0 +1,156 @@
+'use strict';
+
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { createAppServer } = require('../server');
+const { searchByFaceVectors, recomputeClusters, cosineSimilarity } = require('../lib/face-engine');
+const { ArcFaceService } = require('../lib/arcface-client');
+
+const SAMPLE_JPEG_BASE64 =
+  'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=';
+
+function unitVec(seed, noise = 0) {
+  const v = new Array(512).fill(0);
+  v[seed] = 1;
+  v[(seed + 1) % 512] = noise;
+  return v;
+}
+
+async function apiTests() {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'rm6-pink-test-'));
+  const { server } = createAppServer({
+    dataDir: path.join(tmpRoot, 'data'),
+    storageDir: path.join(tmpRoot, 'storage'),
+    disableArcFaceAutoStart: true
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const post = (url, body) => fetch(base + url, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+  }).then((r) => r.json());
+
+  try {
+    // 1. UI
+    const html = await (await fetch(`${base}/`)).text();
+    assert.ok(html.includes('Noto+Sans+Thai'));
+    assert.ok(html.includes('capture="user"'));
+    assert.ok(html.includes('ผู้พัฒนา นายพรชาย วงศ์กระจ่าง ธนาคารออมสินภาค 6'));
+    assert.ok(html.includes('btnModeArcface') && html.includes('btnModeGemini'));
+    assert.ok(!html.includes('btnModeHogSvm'), 'old HOG mode button removed');
+    assert.ok(html.includes('lightboxFaceLayer'), 'Tap-a-Face layer exists');
+    console.log('  ✅ 1. UI: 2 engine modes, Tap-a-Face layer, mobile capture, credit footer');
+
+    // 2. Config
+    const cfg = await post('/api/config', {
+      driveFolderUrl: 'https://drive.google.com/drive/folders/1PinkAlbumSharedFolderId123456?usp=sharing',
+      searchEngineMode: 'arcface_gemini',
+      geminiApiKey: 'dummy'
+    });
+    assert.equal(cfg.driveFolderId, '1PinkAlbumSharedFolderId123456');
+    assert.equal(cfg.searchEngineMode, 'arcface_gemini');
+    await post('/api/config', { searchEngineMode: 'arcface' });
+    console.log('  ✅ 2. Config: Drive folder ID parsed, engine mode saved');
+
+    // 3. Upload with pre-computed 512-D faces -> 2 people, group photo separated
+    const A1 = unitVec(10, 0.05), A2 = unitVec(10, 0.12), B = unitVec(200);
+    const up = await post('/api/photos/upload', {
+      files: [
+        { name: 'g1.jpg', mimeType: 'image/jpeg', dataBase64: SAMPLE_JPEG_BASE64, thumbBase64: SAMPLE_JPEG_BASE64,
+          faces: [{ descriptor: A1, box: { x: 1, y: 1, width: 60, height: 60 } }, { descriptor: B, box: { x: 90, y: 1, width: 60, height: 60 } }] },
+        { name: 'g2.jpg', mimeType: 'image/jpeg', dataBase64: SAMPLE_JPEG_BASE64, thumbBase64: SAMPLE_JPEG_BASE64,
+          faces: [{ descriptor: A2, box: { x: 5, y: 5, width: 60, height: 60 } }] }
+      ]
+    });
+    assert.equal(up.ok, true);
+    assert.equal(up.clusters.length, 2);
+    assert.equal(up.clusters[0].photoCount, 2);
+    console.log('  ✅ 3. 512-D clustering: group photo split, same person merged');
+
+    // 4. Search by descriptor (ArcFace cosine)
+    const s = await post('/api/faces/search', { descriptors: [unitVec(10, 0.08)], threshold: 0.40, engineMode: 'arcface' });
+    assert.equal(s.ok, true);
+    assert.equal(s.engineUsed, 'arcface_512d');
+    assert.equal(s.matchCount, 2);
+    assert.ok(s.results[0].matchSimilarity >= 90);
+    console.log(`  ✅ 4. ArcFace search matched ${s.matchCount} photos (top ${s.results[0].matchSimilarity}%)`);
+
+    // 5. Tap-a-Face search
+    const tapped = await post('/api/faces/search', {
+      sourcePhotoId: up.addedPhotos.find((p) => p.name === 'g2.jpg').id, sourceFaceIndex: 0, threshold: 0.40
+    });
+    assert.equal(tapped.ok, true);
+    assert.equal(tapped.matchCount, 2);
+    const strangers = await post('/api/faces/search', { descriptors: [unitVec(333)], threshold: 0.40 });
+    assert.equal(strangers.matchCount, 0, 'unknown face must not match anyone');
+    console.log('  ✅ 5. Tap-a-Face works; stranger returns 0 matches');
+
+    // 6. ZIP
+    const zipResp = await fetch(`${base}/api/photos/download-zip`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: s.results.map((r) => r.id) })
+    });
+    const zipBuf = Buffer.from(await zipResp.arrayBuffer());
+    assert.equal(zipBuf.readUInt32LE(0), 0x04034b50);
+    console.log('  ✅ 6. ZIP download valid');
+  } finally {
+    await new Promise((r) => server.close(r));
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+}
+
+async function realAlbumTest() {
+  const root = path.resolve(__dirname, '..');
+  const indexPath = path.join(root, 'data', 'index.json');
+  const svc = new ArcFaceService(root);
+  if (!fs.existsSync(indexPath) || !svc.hasModelsOnDisk()) {
+    console.log('  ⏭️  7. Real-album ArcFace test skipped (no album / models)');
+    return;
+  }
+  const db = JSON.parse(fs.readFileSync(indexPath, 'utf8'));
+  const indexed = db.photos.filter((p) => p.engineVersion === 'arcface_512d' && p.faces.length);
+  if (indexed.length < 5) {
+    console.log('  ⏭️  7. Real-album test skipped (album not ArcFace-indexed)');
+    return;
+  }
+
+  try {
+    // Live worker on a real original: detection + 512-D embedding
+    const p0 = indexed[0];
+    const out = await svc.analyzeImage({ imagePath: path.join(root, 'storage', 'originals', p0.origFileName) });
+    assert.ok(out.faces.length > 0, 'SCRFD finds faces in a real photo');
+    assert.equal(out.faces[0].descriptor.length, 512);
+    // Re-embedding the same photo must reproduce stored embeddings (determinism): every live face matches a stored one
+    let minBest = 1;
+    for (const lf of out.faces) {
+      const best = Math.max(...p0.faces.map((sf) => cosineSimilarity(sf.descriptor, lf.descriptor)));
+      minBest = Math.min(minBest, best);
+    }
+    const cos = minBest;
+    assert.ok(cos > 0.95, `stored vs live embedding cosine ${cos}`);
+
+    // Real cluster recall: query with one face of the biggest person; should recover most of their photos
+    const clusters = recomputeClusters(db.photos, [], 0.42);
+    const big = clusters[0];
+    const seedPhoto = db.photos.find((p) => p.faces.some((f) => f.clusterId === big.id && f.clusterEligible));
+    const seedFace = seedPhoto.faces.find((f) => f.clusterId === big.id && f.clusterEligible);
+    const found = searchByFaceVectors(db.photos, [seedFace.descriptor], 0.40);
+    const foundIds = new Set(found.map((m) => m.photoId));
+    const recall = big.photoIds.filter((id) => foundIds.has(id)).length / big.photoIds.length;
+    assert.ok(recall >= 0.85, `recall ${recall}`);
+    console.log(`  ✅ 7. Real album: SCRFD+ArcFace live OK (self-cos ${cos.toFixed(3)}), top person ${big.photoCount} photos, search recall ${(recall * 100).toFixed(0)}%, ${found.length} hits`);
+  } finally {
+    svc.shutdown();
+  }
+}
+
+(async () => {
+  console.log('🧪 RM6 Pink Album tests');
+  await apiTests();
+  await realAlbumTest();
+  console.log('\n🎉 All tests passed!');
+})().catch((err) => {
+  console.error('❌ Test failed:', err);
+  process.exit(1);
+});
