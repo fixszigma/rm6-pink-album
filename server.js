@@ -488,8 +488,14 @@ function createAppServer(options = {}) {
       }
 
       // 2a. GET /api/drive/oauth/start & /api/drive/oauth/callback
+      const getOAuthRedirectUri = (r) => {
+        const proto = String(r.headers['x-forwarded-proto'] || 'http').split(',')[0].trim();
+        const host = String(r.headers['x-forwarded-host'] || r.headers.host || 'localhost:3000').split(',')[0].trim();
+        return `${proto}://${host}/api/drive/oauth/callback`;
+      };
+
       if (method === 'GET' && pathname === '/api/drive/oauth/start') {
-        const redirectUri = `http://${req.headers.host || 'localhost:3000'}/api/drive/oauth/callback`;
+        const redirectUri = getOAuthRedirectUri(req);
         const authUrl = buildGoogleOAuthUrl(config, redirectUri);
         res.writeHead(302, { Location: authUrl });
         return res.end();
@@ -501,7 +507,7 @@ function createAppServer(options = {}) {
           res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
           return res.end('<h3>ไม่พบรหัสยืนยันจาก Google OAuth</h3><a href="/">กลับหน้าหลัก</a>');
         }
-        const redirectUri = `http://${req.headers.host || 'localhost:3000'}/api/drive/oauth/callback`;
+        const redirectUri = getOAuthRedirectUri(req);
         const tokens = await exchangeOAuthCode(config, code, redirectUri);
         if (tokens.refreshToken) config.oauthRefreshToken = tokens.refreshToken;
         if (tokens.accessToken) config.googleOauthToken = tokens.accessToken;
