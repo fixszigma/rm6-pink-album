@@ -80,6 +80,25 @@
         <input type="file" id="fileInputSelfieCapture" accept="image/*" capture="user" hidden />
         <input type="file" id="fileInputQueryFace" accept="image/*" hidden />
 
+        <!-- Returning Guest Avatar Bar -->
+        <div class="active-search-bar" id="guestAvatarBar" hidden style="background: linear-gradient(135deg, #fff5fa 0%, #ffffff 100%); border-color: #f3c2dc;">
+          <div class="active-search-info">
+            <img class="active-search-thumb" id="guestAvatarImg" src="" alt="Guest Avatar" />
+            <div>
+              <div class="active-search-text" id="guestAvatarTitle">👤 หน้าเดิมของคุณ (Guest Avatar)</div>
+              <div class="active-search-sub">กดค้นหาเพื่อดูรูปที่อัปโหลดเข้ามาใหม่ได้ทันที</div>
+            </div>
+          </div>
+          <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+            <button class="btn btn-primary" id="btnSearchGuestAvatar" type="button" style="padding: 7px 14px; font-size: 0.84rem;">
+              🔍 ค้นหาด้วยหน้าเดิม
+            </button>
+            <button class="btn btn-ghost" id="btnClearGuestAvatar" type="button" style="padding: 7px 10px; font-size: 0.8rem;">
+              ✕ ล้าง
+            </button>
+          </div>
+        </div>
+
         <!-- Active Search / Cluster Filter Chip -->
         <div class="active-search-bar" id="activeSearchBar" hidden>
           <div class="active-search-info">

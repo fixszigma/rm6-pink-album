@@ -192,6 +192,7 @@ function renderClusters() {
       state.searchMatches = null;
       state.lastQuery = null;
       state.activeClusterId = cluster.id;
+      saveGuestAvatar({ type: 'cluster', clusterId: cluster.id, avatarUrl: cluster.avatarDataUrl || '' });
       syncFilterBannerUI();
       renderClusters();
       renderPhotoGrid();
@@ -489,6 +490,17 @@ async function executeSearch(query) {
     renderClusters();
     renderPhotoGrid();
     switchTab('search');
+
+    const savedAvatar = resp.queryFaceAvatarUrl || query.avatarUrl || '';
+    if (savedAvatar || query.queryImageBase64) {
+      saveGuestAvatar({
+        type: query.type || 'image',
+        avatarUrl: savedAvatar,
+        queryImageBase64: query.queryImageBase64 || savedAvatar,
+        sourcePhotoId: query.sourcePhotoId || '',
+        sourceFaceIndex: query.sourceFaceIndex
+      });
+    }
   } catch (err) {
     $('activeFilterTitle').textContent = err.name === 'AbortError'
       ? 'หมดเวลาค้นหา (กรุณาลองใหม่)'
@@ -596,9 +608,63 @@ function openLightbox(photo) {
 // QR + ZIP
 // ============================================================================
 
+function withExternalBrowserParam(rawUrl) {
+  try {
+    const u = new URL(rawUrl);
+    if (!u.searchParams.has('openExternalBrowser')) {
+      u.searchParams.set('openExternalBrowser', '1');
+    }
+    return u.toString();
+  } catch {
+    return rawUrl;
+  }
+}
+
+const GUEST_AVATAR_KEY = 'rm6_guest_avatar_v1';
+
+function loadGuestAvatar() {
+  try {
+    const raw = window.localStorage.getItem(GUEST_AVATAR_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveGuestAvatar(entry) {
+  try {
+    if (!entry || (!entry.avatarUrl && !entry.queryImageBase64)) return;
+    window.localStorage.setItem(GUEST_AVATAR_KEY, JSON.stringify({ ...entry, savedAt: Date.now() }));
+    renderGuestAvatarBar();
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
+function clearGuestAvatar() {
+  try { window.localStorage.removeItem(GUEST_AVATAR_KEY); } catch {}
+  renderGuestAvatarBar();
+}
+
+function renderGuestAvatarBar() {
+  const bar = $('guestAvatarBar');
+  if (!bar) return;
+  const saved = loadGuestAvatar();
+  if (!saved || (!saved.avatarUrl && !saved.queryImageBase64)) {
+    bar.hidden = true;
+    return;
+  }
+  const img = $('guestAvatarImg');
+  if (img) {
+    img.src = saved.avatarUrl || saved.queryImageBase64;
+    img.hidden = !img.src;
+  }
+  bar.hidden = false;
+}
+
 function renderQrModal() {
   const input = $('qrUrlInput');
-  const url = input.value.trim() || state.lanUrl || window.location.origin;
+  const url = input.value.trim() || withExternalBrowserParam(state.lanUrl || window.location.origin);
   input.value = url;
   if (window.RM6QR) {
     window.RM6QR.renderToCanvas($('qrCanvas'), url, { pixelSize: 220, darkColor: '#a60062', lightColor: '#ffffff' });
@@ -827,7 +893,34 @@ window.addEventListener('DOMContentLoaded', async () => {
   $('btnModeGemini').addEventListener('click', () => selectEngineMode('arcface_gemini'));
 
   // QR
-  $('btnOpenQr').addEventListener('click', () => { $('qrUrlInput').value = state.lanUrl || window.location.origin; renderQrModal(); });
+  $('btnOpenQr').addEventListener('click', () => { $('qrUrlInput').value = withExternalBrowserParam(state.lanUrl || window.location.origin); renderQrModal(); });
+
+  // Guest Avatar
+  renderGuestAvatarBar();
+  if ($('btnSearchGuestAvatar')) {
+    $('btnSearchGuestAvatar').addEventListener('click', async () => {
+      const saved = loadGuestAvatar();
+      if (!saved) return;
+      if (saved.type === 'cluster' && saved.clusterId && state.clusters.some((c) => c.id === saved.clusterId)) {
+        state.activeClusterId = saved.clusterId;
+        state.searchMatches = null;
+        syncFilterBannerUI();
+        renderClusters();
+        renderPhotoGrid();
+        return;
+      }
+      await executeSearch({
+        type: saved.type === 'face' && saved.sourcePhotoId ? 'face' : 'image',
+        avatarUrl: saved.avatarUrl || saved.queryImageBase64,
+        queryImageBase64: saved.queryImageBase64 || saved.avatarUrl,
+        sourcePhotoId: saved.sourcePhotoId,
+        sourceFaceIndex: saved.sourceFaceIndex
+      });
+    });
+  }
+  if ($('btnClearGuestAvatar')) {
+    $('btnClearGuestAvatar').addEventListener('click', clearGuestAvatar);
+  }
   $('qrUrlInput').addEventListener('input', renderQrModal);
   $('btnCopyQrLink').addEventListener('click', async () => {
     const val = $('qrUrlInput').value.trim();
