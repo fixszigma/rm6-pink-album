@@ -156,10 +156,12 @@ function createAppServer(options = {}) {
     clusterThreshold: DEFAULT_CLUSTER_COSINE
   };
 
-  const adminTokens = new Set();
+  const getExpectedAdminToken = () =>
+    crypto.createHash('sha256').update(`rm6-pink-admin-v1:${String(config.adminPassword || 'rm6admin')}`).digest('hex');
+
   const isAdminAuthorized = (req) => {
     const token = String(req.headers['x-admin-token'] || '').trim();
-    return Boolean(token && adminTokens.has(token));
+    return Boolean(token && token === getExpectedAdminToken());
   };
 
   if (fs.existsSync(configPath)) {
@@ -446,8 +448,7 @@ function createAppServer(options = {}) {
         if (!pwd || pwd !== String(config.adminPassword || 'rm6admin')) {
           return sendJson(res, 401, { ok: false, error: 'รหัสผ่านผู้ดูแลไม่ถูกต้อง' });
         }
-        const token = crypto.randomBytes(24).toString('hex');
-        adminTokens.add(token);
+        const token = getExpectedAdminToken();
         return sendJson(res, 200, { ok: true, token });
       }
 

@@ -1463,6 +1463,10 @@ window.addEventListener('DOMContentLoaded', async () => {
         headers: { 'x-admin-token': getAdminToken() }
       }).then((r) => r.json());
       if (!resp.ok) {
+        if (String(resp.error || '').includes('ผู้ดูแล')) {
+          setAdminToken('');
+          $('btnDeletePhotoAdmin').hidden = true;
+        }
         window.alert(resp.error || 'ลบรูปไม่สำเร็จ');
         return;
       }
