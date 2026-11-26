@@ -2,7 +2,7 @@
 <html lang="th">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>RM6 Pink Album</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -37,6 +37,18 @@
   </header>
 
   <main class="main-wrap">
+    <!-- LINE / In-App Browser Warning Banner -->
+    <div class="inapp-banner" id="inAppBrowserBanner" hidden>
+      <div class="inapp-banner-text">
+        <strong>⚠️ เปิดผ่าน LINE อาจใช้งานกล้องเซลฟีไม่ได้</strong>
+        <span id="inAppBrowserHint">กรุณากดปุ่มด้านล่าง หรือกดจุด 3 จุด (⋯ / ⋮) แล้วเลือก <b>เปิดในเบราว์เซอร์เริ่มต้น (Safari / Chrome)</b></span>
+      </div>
+      <div class="inapp-banner-actions">
+        <button class="btn btn-primary" id="btnOpenExternalBrowser" type="button">🌐 เปิดใน Chrome / Safari</button>
+        <button class="btn btn-soft" id="btnCopyCurrentUrl" type="button">📋 คัดลอกลิงก์</button>
+      </div>
+    </div>
+
     <!-- TAB 1 (DEFAULT): SEARCH & ATTENDEE GALLERY -->
     <div id="viewSearch" style="display: flex; flex-direction: column; gap: 12px;">
       <!-- Minimal Face Search Card -->

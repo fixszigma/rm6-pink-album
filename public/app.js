@@ -523,7 +523,8 @@ async function searchFromImageElement(imgOrCanvas) {
 
 async function openSelfieCamera() {
   const native = $('fileInputSelfieCapture');
-  const canWebRtc = Boolean(window.isSecureContext && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+  const isInApp = /Line\/|FBAN|FBAV|Instagram/i.test(navigator.userAgent || '');
+  const canWebRtc = Boolean(!isInApp && window.isSecureContext && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
   if (!canWebRtc) { native.click(); return; }
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
@@ -618,6 +619,60 @@ function withExternalBrowserParam(rawUrl) {
   } catch {
     return rawUrl;
   }
+}
+
+function initInAppBrowserBanner() {
+  const banner = $('inAppBrowserBanner');
+  if (!banner) return;
+  const ua = navigator.userAgent || '';
+  const isInApp = /Line\/|FBAN|FBAV|Instagram/i.test(ua);
+  if (!isInApp) {
+    banner.hidden = true;
+    return;
+  }
+
+  const isAndroid = /Android/i.test(ua);
+  const isIOS = /iPhone|iPad|iPod/i.test(ua);
+  const hint = $('inAppBrowserHint');
+  if (hint) {
+    hint.innerHTML = isIOS
+      ? 'กรุณากดปุ่ม <b>⋯ (มุมขวาล่าง)</b> แล้วเลือก <b>เปิดใน Safari</b> หรือคัดลอกลิงก์ไปเปิดใน Safari'
+      : 'กดปุ่มด้านล่างเพื่อเปิดใน Chrome หรือกด <b>⋮</b> แล้วเลือก <b>เปิดในเบราว์เซอร์เริ่มต้น</b>';
+  }
+
+  const btnOpen = $('btnOpenExternalBrowser');
+  if (btnOpen) {
+    btnOpen.hidden = isIOS;
+    btnOpen.addEventListener('click', () => {
+      const targetUrl = withExternalBrowserParam(window.location.href);
+      if (isAndroid) {
+        const clean = targetUrl.replace(/^https?:\/\//i, '');
+        window.location.href = `intent://${clean}#Intent;scheme=https;package=com.android.chrome;end`;
+      } else {
+        window.location.href = targetUrl;
+      }
+    });
+  }
+
+  const btnCopy = $('btnCopyCurrentUrl');
+  if (btnCopy) {
+    btnCopy.addEventListener('click', async () => {
+      const urlToCopy = window.location.href.split('?')[0];
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(urlToCopy);
+      } else {
+        const tmp = document.createElement('input');
+        tmp.value = urlToCopy;
+        document.body.appendChild(tmp);
+        tmp.select();
+        document.execCommand('copy');
+        document.body.removeChild(tmp);
+      }
+      window.alert('คัดลอกลิงก์แล้ว! นำไปวางเปิดใน Safari หรือ Chrome ได้เลยครับ');
+    });
+  }
+
+  banner.hidden = false;
 }
 
 const GUEST_AVATAR_KEY = 'rm6_guest_avatar_v1';
@@ -895,7 +950,8 @@ window.addEventListener('DOMContentLoaded', async () => {
   // QR
   $('btnOpenQr').addEventListener('click', () => { $('qrUrlInput').value = withExternalBrowserParam(state.lanUrl || window.location.origin); renderQrModal(); });
 
-  // Guest Avatar
+  // Guest Avatar & In-App Browser Banner
+  initInAppBrowserBanner();
   renderGuestAvatarBar();
   if ($('btnSearchGuestAvatar')) {
     $('btnSearchGuestAvatar').addEventListener('click', async () => {
