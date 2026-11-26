@@ -21,9 +21,8 @@ const state = {
   landingDate: '',
   landingBgGradient: 'gsb_pink',
   showFaceBoxes: true,
-  friendSelectMode: false,
-  friendFilterActive: false,
-  selectedFriendClusterIds: [],
+  extraFriends: [], // [{ key, label, avatarUrl, photoIds: Set<string> }] max 2 extra (= 3 people total)
+  selfieCaptureTarget: 'primary', // 'primary' | 'friend'
   driveFolderId: '',
   driveFolderUrl: '',
   driveAuthMode: 'local_only',
@@ -261,10 +260,9 @@ function renderClusters() {
   $('statTotalClusters').textContent = display.length;
 
   for (const cluster of display) {
-    const isActive = !state.friendSelectMode && state.activeClusterId === cluster.id;
-    const isFriendPicked = state.selectedFriendClusterIds.includes(cluster.id);
+    const isActive = state.activeClusterId === cluster.id;
     const item = document.createElement('div');
-    item.className = `cluster-item${isActive ? ' active' : ''}${isFriendPicked ? ' friend-picked' : ''}`;
+    item.className = `cluster-item${isActive ? ' active' : ''}`;
     item.innerHTML = `
       <div class="cluster-avatar-wrap">
         <img class="cluster-avatar" src="${cluster.avatarDataUrl || ''}" alt="${cluster.label}" />
@@ -273,31 +271,14 @@ function renderClusters() {
       <div class="cluster-label" title="คลิกเพื่อกรอง / ดับเบิลคลิกเพื่อเปลี่ยนชื่อ">${cluster.label}</div>
     `;
 
-    // Click a person => either toggle in friend group (up to 3) or filter single cluster
+    // Click a person => filter photos for that person (can then add up to 2 friends from the top card)
     item.addEventListener('click', () => {
-      if (state.friendSelectMode) {
-        const idx = state.selectedFriendClusterIds.indexOf(cluster.id);
-        if (idx >= 0) {
-          state.selectedFriendClusterIds.splice(idx, 1);
-        } else {
-          if (state.selectedFriendClusterIds.length >= 3) {
-            window.alert('เลือกเพื่อนได้สูงสุดไม่เกิน 3 คนครับ');
-            return;
-          }
-          state.selectedFriendClusterIds.push(cluster.id);
-        }
-        renderFriendGroupBar();
-        renderClusters();
-        return;
-      }
       if (state.activeClusterId === cluster.id) { clearAllFilters(); return; }
       state.searchMatches = null;
       state.lastQuery = null;
-      state.friendFilterActive = false;
-      state.selectedFriendClusterIds = [];
+      state.extraFriends = [];
       state.activeClusterId = cluster.id;
       saveGuestAvatar({ type: 'cluster', clusterId: cluster.id, avatarUrl: cluster.avatarDataUrl || '' });
-      renderFriendGroupBar();
       syncFilterBannerUI();
       renderClusters();
       renderPhotoGrid();
@@ -339,54 +320,116 @@ function renderClusters() {
   }
 }
 
-function renderFriendGroupBar() {
-  const bar = $('friendGroupBar');
-  const chips = $('friendChipsWrap');
-  const applyBtn = $('btnApplyFriendFilter');
-  const toggleBtn = $('btnToggleFriendSelect');
-  if (!bar || !chips) return;
+function openAddFriendModal() {
+  if ($('friendSelfieStatus')) $('friendSelfieStatus').hidden = true;
+  renderFriendPickerModal();
+  if ($('addFriendModal')) $('addFriendModal').hidden = false;
+}
 
-  const show = state.friendSelectMode || state.selectedFriendClusterIds.length > 0;
-  bar.hidden = !show;
-  if (toggleBtn) {
-    toggleBtn.classList.toggle('btn-primary', state.friendSelectMode);
-    toggleBtn.classList.toggle('btn-soft', !state.friendSelectMode);
+function renderFriendPickerModal() {
+  const grid = $('friendPickerGrid');
+  const countEl = $('friendModalCountSpan');
+  if (countEl) countEl.textContent = String(1 + state.extraFriends.length);
+  if (!grid) return;
+  grid.innerHTML = '';
+
+  const candidates = state.clusters.filter((c) => c.id !== state.activeClusterId);
+  if (!candidates.length) {
+    grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--text-muted);font-size:0.82rem;padding:12px;">ยังไม่มีรายชื่อบุคคลอื่นในงาน</div>';
+    return;
   }
 
-  chips.innerHTML = '';
-  if (!state.selectedFriendClusterIds.length) {
-    chips.innerHTML = '<span style="font-size:0.78rem;color:var(--text-muted);">แตะที่รูปบุคคลในงานด้านล่าง 1–3 คน</span>';
-  } else {
-    state.selectedFriendClusterIds.forEach((cid) => {
-      const c = state.clusters.find((x) => x.id === cid);
-      if (!c) return;
-      const chip = document.createElement('span');
-      chip.className = 'friend-chip';
-      chip.innerHTML = `<img src="${c.avatarDataUrl || ''}" alt="${c.label}" /><span>${c.label}</span><button type="button" aria-label="ลบ">✕</button>`;
-      chip.querySelector('button').addEventListener('click', () => {
-        state.selectedFriendClusterIds = state.selectedFriendClusterIds.filter((x) => x !== cid);
-        if (!state.selectedFriendClusterIds.length) state.friendFilterActive = false;
-        renderFriendGroupBar();
-        renderClusters();
-        syncFilterBannerUI();
-        renderPhotoGrid();
-      });
-      chips.appendChild(chip);
+  candidates.forEach((c) => {
+    const existingIdx = state.extraFriends.findIndex((f) => f.key === c.id);
+    const picked = existingIdx >= 0;
+    const item = document.createElement('div');
+    item.className = `friend-picker-item${picked ? ' picked' : ''}`;
+    item.innerHTML = `
+      <div class="friend-picker-avatar-wrap">
+        <img src="${c.avatarDataUrl || ''}" alt="${c.label}" />
+        ${picked ? '<span class="friend-picker-check">✓</span>' : ''}
+      </div>
+      <div class="cluster-label">${c.label}</div>
+    `;
+    item.addEventListener('click', () => {
+      if (picked) {
+        state.extraFriends.splice(existingIdx, 1);
+      } else {
+        if (state.extraFriends.length >= 2) {
+          window.alert('เพิ่มเพื่อนได้สูงสุด 2 คน (รวมทั้งหมดไม่เกิน 3 คนในรูป)');
+          return;
+        }
+        const matchedIds = new Set(
+          state.photos
+            .filter((p) => Array.isArray(p.clusterIds) && p.clusterIds.includes(c.id))
+            .map((p) => p.id)
+        );
+        state.extraFriends.push({
+          key: c.id,
+          label: c.label,
+          avatarUrl: c.avatarDataUrl || '',
+          photoIds: matchedIds
+        });
+      }
+      renderFriendPickerModal();
+      syncFilterBannerUI();
+      renderPhotoGrid();
     });
+    grid.appendChild(item);
+  });
+}
+
+async function addFriendFromImageElement(imgOrCanvas) {
+  if (state.extraFriends.length >= 2) {
+    window.alert('เพิ่มเพื่อนได้สูงสุด 2 คน (รวมทั้งหมดไม่เกิน 3 คนในรูป)');
+    return;
   }
-  if (applyBtn) {
-    applyBtn.disabled = state.selectedFriendClusterIds.length === 0;
+  const statusEl = $('friendSelfieStatus');
+  if (statusEl) {
+    statusEl.hidden = false;
+    statusEl.textContent = '🔄 กำลังค้นหาใบหน้าเพื่อน...';
+  }
+  try {
+    const queryImageBase64 = downscaleToDataUrl(imgOrCanvas, 1024, 0.9);
+    const fallbackAvatar = downscaleToDataUrl(imgOrCanvas, 160, 0.8);
+    const resp = await fetch('/api/faces/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        engineMode: currentEngineMode(),
+        threshold: Number($('thresholdSlider').value) || 0.38,
+        queryImageBase64
+      })
+    }).then((r) => r.json());
+
+    if (!resp.ok || resp.noFaceInQuery) {
+      if (statusEl) statusEl.textContent = resp.noFaceInQuery ? '⚠️ ไม่พบใบหน้าในภาพเพื่อน กรุณาลองใหม่' : (resp.error || 'ค้นหาไม่สำเร็จ');
+      return;
+    }
+
+    const idx = state.extraFriends.length + 1;
+    state.extraFriends.push({
+      key: `selfie_${Date.now()}`,
+      label: `เพื่อน ${idx}`,
+      avatarUrl: resp.queryFaceAvatarUrl || fallbackAvatar,
+      photoIds: new Set((resp.results || []).map((r) => r.id))
+    });
+    if (statusEl) statusEl.hidden = true;
+    renderFriendPickerModal();
+    syncFilterBannerUI();
+    renderPhotoGrid();
+  } catch (err) {
+    if (statusEl) statusEl.textContent = `❌ ${err.message}`;
   }
 }
 
 function getVisiblePhotos() {
   let list = Array.isArray(state.searchMatches) ? state.searchMatches : state.photos;
-  if (state.friendFilterActive && state.selectedFriendClusterIds.length > 0) {
-    list = list.filter((p) =>
-      state.selectedFriendClusterIds.every((cid) => Array.isArray(p.clusterIds) && p.clusterIds.includes(cid))
-    );
-  } else if (!Array.isArray(state.searchMatches) && state.activeClusterId) {
+  if (!Array.isArray(state.searchMatches) && state.activeClusterId) {
     list = list.filter((p) => Array.isArray(p.clusterIds) && p.clusterIds.includes(state.activeClusterId));
+  }
+  if (state.extraFriends.length > 0) {
+    list = list.filter((p) => state.extraFriends.every((f) => f.photoIds && f.photoIds.has(p.id)));
   }
   return list;
 }
@@ -396,12 +439,9 @@ function clearAllFilters() {
   state.searchMatches = null;
   state.lastQuery = null;
   state.lastSearchMeta = null;
-  state.friendFilterActive = false;
-  state.selectedFriendClusterIds = [];
-  state.friendSelectMode = false;
+  state.extraFriends = [];
   $('fileInputQueryFace').value = '';
   $('fileInputSelfieCapture').value = '';
-  renderFriendGroupBar();
   syncFilterBannerUI();
   renderClusters();
   renderPhotoGrid();
@@ -414,8 +454,7 @@ function renderAiGraphicTag(label) {
 function syncFilterBannerUI() {
   const hasSearch = Array.isArray(state.searchMatches);
   const hasCluster = Boolean(state.activeClusterId);
-  const hasFriends = state.friendFilterActive && state.selectedFriendClusterIds.length > 0;
-  const filtered = hasSearch || hasCluster || hasFriends;
+  const filtered = hasSearch || hasCluster;
 
   $('btnClearFaceFilter').hidden = !filtered;
   $('activeSearchBar').hidden = !filtered;
@@ -425,75 +464,79 @@ function syncFilterBannerUI() {
   const title = $('activeFilterTitle');
   const tagWrap = $('activeEngineTagWrap');
   const sub = $('activeFilterSub');
+  const addBtn = $('btnOpenAddFriendModal');
 
   if (!filtered) {
     thumb.hidden = true;
     thumb.removeAttribute('src');
-    if (extraWrap) { extraWrap.innerHTML = ''; extraWrap.hidden = true; }
+    if (extraWrap) extraWrap.innerHTML = '';
     tagWrap.innerHTML = '';
     sub.textContent = '';
     return;
   }
 
-  const renderFriendAvatars = (ids, includePlusBeforeFirst) => {
-    if (!extraWrap) return;
+  // Render 3-slot visual row: [Primary] + [Friend 1 or +] + [Friend 2 or +]
+  if (extraWrap) {
     extraWrap.innerHTML = '';
-    if (!ids || !ids.length) {
-      extraWrap.hidden = true;
-      return;
-    }
-    ids.forEach((cid, i) => {
-      const c = state.clusters.find((x) => x.id === cid);
-      if (!c || !c.avatarDataUrl) return;
-      if (includePlusBeforeFirst || i > 0) {
-        const plus = document.createElement('span');
-        plus.className = 'active-search-plus';
-        plus.textContent = '+';
-        extraWrap.appendChild(plus);
+    for (let slot = 0; slot < 2; slot++) {
+      const friend = state.extraFriends[slot];
+      const plus = document.createElement('span');
+      plus.className = 'active-search-plus';
+      plus.textContent = '+';
+      extraWrap.appendChild(plus);
+
+      if (friend) {
+        const wrap = document.createElement('div');
+        wrap.className = 'friend-slot-wrap';
+        wrap.innerHTML = `
+          <img class="active-search-thumb-friend" src="${friend.avatarUrl || ''}" alt="${friend.label}" title="${friend.label}" />
+          <button class="friend-slot-remove" type="button" title="เอา ${friend.label} ออก" aria-label="เอาออก">✕</button>
+        `;
+        wrap.querySelector('button').addEventListener('click', () => {
+          state.extraFriends.splice(slot, 1);
+          syncFilterBannerUI();
+          renderPhotoGrid();
+        });
+        extraWrap.appendChild(wrap);
+      } else {
+        const addSlot = document.createElement('button');
+        addSlot.type = 'button';
+        addSlot.className = 'friend-slot-add';
+        addSlot.innerHTML = '<span style="font-size:1.25rem;line-height:1;">＋</span><span>เพิ่มเพื่อน</span>';
+        addSlot.addEventListener('click', openAddFriendModal);
+        extraWrap.appendChild(addSlot);
       }
-      const imgEl = document.createElement('img');
-      imgEl.className = 'active-search-thumb-friend';
-      imgEl.src = c.avatarDataUrl;
-      imgEl.alt = c.label || 'เพื่อน';
-      imgEl.title = c.label || '';
-      extraWrap.appendChild(imgEl);
-    });
-    extraWrap.hidden = extraWrap.children.length === 0;
-  };
+    }
+  }
+  if (addBtn) addBtn.hidden = state.extraFriends.length >= 2;
 
   const visibleCount = getVisiblePhotos().length;
+  const hasFriends = state.extraFriends.length > 0;
+  const totalPeople = 1 + state.extraFriends.length;
+
   if (hasSearch) {
     const avatar = state.lastSearchMeta && state.lastSearchMeta.queryFaceAvatarUrl
       ? state.lastSearchMeta.queryFaceAvatarUrl
       : (state.lastQuery && state.lastQuery.avatarUrl) || '';
     if (avatar) { thumb.src = avatar; thumb.hidden = false; } else { thumb.hidden = true; }
-    renderFriendAvatars(hasFriends ? state.selectedFriendClusterIds : [], Boolean(avatar));
 
-    title.textContent = `พบ ${visibleCount} รูปที่ตรงกัน`;
-    tagWrap.innerHTML = renderAiGraphicTag(hasFriends ? `✨ พบภาพที่มีเพื่อนร่วมเฟรม (${state.selectedFriendClusterIds.length} คน)` : '✨ ค้นหาภาพด้วย AI สำเร็จ');
+    title.textContent = hasFriends
+      ? `พบ ${visibleCount} รูปที่อยู่ด้วยกัน (${totalPeople} คน)`
+      : `พบ ${visibleCount} รูปที่ตรงกัน`;
+    tagWrap.innerHTML = renderAiGraphicTag(hasFriends ? `👥 ค้นหารูปคู่/กลุ่ม (${totalPeople} คน)` : '✨ ค้นหาภาพด้วย AI สำเร็จ');
 
     const notes = [];
     const meta = state.lastSearchMeta || {};
-    if (meta.expandedCount > 0) notes.push(`ค้นต่อยอดเพิ่ม ${meta.expandedCount} รูป`);
+    if (meta.expandedCount > 0 && !hasFriends) notes.push(`ค้นต่อยอดเพิ่ม ${meta.expandedCount} รูป`);
     if (meta.geminiError) notes.push(meta.geminiError);
     sub.textContent = notes.join(' • ');
-  } else if (hasFriends) {
-    const firstC = state.clusters.find((x) => x.id === state.selectedFriendClusterIds[0]);
-    if (firstC && firstC.avatarDataUrl) { thumb.src = firstC.avatarDataUrl; thumb.hidden = false; } else { thumb.hidden = true; }
-    renderFriendAvatars(state.selectedFriendClusterIds.slice(1), Boolean(firstC && firstC.avatarDataUrl));
-    const names = state.selectedFriendClusterIds
-      .map((cid) => (state.clusters.find((x) => x.id === cid) || {}).label)
-      .filter(Boolean)
-      .join(' + ');
-    title.textContent = `ภาพที่อยู่ด้วยกัน (${visibleCount} รูป)`;
-    tagWrap.innerHTML = renderAiGraphicTag(`👥 ${names}`);
-    sub.textContent = '';
   } else {
     const c = state.clusters.find((x) => x.id === state.activeClusterId);
     if (c && c.avatarDataUrl) { thumb.src = c.avatarDataUrl; thumb.hidden = false; } else { thumb.hidden = true; }
-    renderFriendAvatars([], false);
-    title.textContent = `${c ? c.label : 'บุคคลที่เลือก'} (${visibleCount} รูป)`;
-    tagWrap.innerHTML = renderAiGraphicTag('👤 คัดแยกบุคคลอัตโนมัติ');
+    title.textContent = hasFriends
+      ? `ภาพที่อยู่ด้วยกัน ${totalPeople} คน (${visibleCount} รูป)`
+      : `${c ? c.label : 'บุคคลที่เลือก'} (${visibleCount} รูป)`;
+    tagWrap.innerHTML = renderAiGraphicTag(hasFriends ? `👥 ${[c ? c.label : '', ...state.extraFriends.map((f) => f.label)].filter(Boolean).join(' + ')}` : '👤 คัดแยกบุคคลอัตโนมัติ');
     sub.textContent = '';
   }
 }
@@ -715,11 +758,12 @@ async function searchFromImageElement(imgOrCanvas) {
   await executeSearch(state.lastQuery);
 }
 
-async function openSelfieCamera() {
-  const native = $('fileInputSelfieCapture');
+async function openSelfieCamera(target = 'primary') {
+  state.selfieCaptureTarget = target === 'friend' ? 'friend' : 'primary';
+  const native = state.selfieCaptureTarget === 'friend' ? $('fileInputFriendSelfie') : $('fileInputSelfieCapture');
   const isInApp = /Line\/|FBAN|FBAV|Instagram/i.test(navigator.userAgent || '');
   const canWebRtc = Boolean(!isInApp && window.isSecureContext && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
-  if (!canWebRtc) { native.click(); return; }
+  if (!canWebRtc) { if (native) native.click(); return; }
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: 'user', width: { ideal: 960 }, height: { ideal: 960 } },
@@ -1350,40 +1394,19 @@ window.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
-  // LINE Share & Lightbox face box toggle + Left/Right navigation + Friend group selector
-  if ($('btnToggleFriendSelect')) {
-    $('btnToggleFriendSelect').addEventListener('click', () => {
-      state.friendSelectMode = !state.friendSelectMode;
-      if (state.friendSelectMode) {
-        state.activeClusterId = null;
-      }
-      renderFriendGroupBar();
-      renderClusters();
-    });
-  }
-  if ($('btnApplyFriendFilter')) {
-    $('btnApplyFriendFilter').addEventListener('click', () => {
-      if (!state.selectedFriendClusterIds.length) return;
-      state.friendFilterActive = true;
-      state.activeClusterId = null;
-      state.friendSelectMode = false;
-      renderFriendGroupBar();
-      syncFilterBannerUI();
-      renderClusters();
-      renderPhotoGrid();
-    });
-  }
-  if ($('btnClearFriendFilter')) {
-    $('btnClearFriendFilter').addEventListener('click', () => {
-      state.friendFilterActive = false;
-      state.selectedFriendClusterIds = [];
-      state.friendSelectMode = false;
-      renderFriendGroupBar();
-      syncFilterBannerUI();
-      renderClusters();
-      renderPhotoGrid();
-    });
-  }
+  // Add Friend Popup Modal + Lightbox Left/Right navigation
+  if ($('btnOpenAddFriendModal')) $('btnOpenAddFriendModal').addEventListener('click', openAddFriendModal);
+  if ($('btnFriendSelfie')) $('btnFriendSelfie').addEventListener('click', () => openSelfieCamera('friend'));
+  if ($('btnFriendPickPhoto')) $('btnFriendPickPhoto').addEventListener('click', () => $('fileInputFriendPhoto').click());
+  const onFriendFacePicked = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    try { await addFriendFromImageElement(await loadImage(file)); }
+    catch (err) { window.alert(err.message); }
+  };
+  if ($('fileInputFriendSelfie')) $('fileInputFriendSelfie').addEventListener('change', onFriendFacePicked);
+  if ($('fileInputFriendPhoto')) $('fileInputFriendPhoto').addEventListener('change', onFriendFacePicked);
   if ($('btnLightboxPrev')) $('btnLightboxPrev').addEventListener('click', () => stepLightbox(-1));
   if ($('btnLightboxNext')) $('btnLightboxNext').addEventListener('click', () => stepLightbox(1));
   document.addEventListener('keydown', (e) => {
@@ -1472,7 +1495,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   });
 
   // Selfie / reference
-  $('btnOpenSelfieCamera').addEventListener('click', openSelfieCamera);
+  $('btnOpenSelfieCamera').addEventListener('click', () => openSelfieCamera('primary'));
   $('btnCloseSelfieModal').addEventListener('click', closeSelfieCamera);
   $('btnCaptureSelfie').addEventListener('click', async () => {
     const video = $('selfieVideo');
@@ -1481,15 +1504,22 @@ window.addEventListener('DOMContentLoaded', async () => {
     canvas.height = video.videoHeight || 640;
     canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
     closeSelfieCamera();
-    await searchFromImageElement(canvas);
+    if (state.selfieCaptureTarget === 'friend') {
+      await addFriendFromImageElement(canvas);
+    } else {
+      state.extraFriends = [];
+      await searchFromImageElement(canvas);
+    }
   });
 
   const onFacePicked = async (e) => {
     const file = e.target.files && e.target.files[0];
     e.target.value = '';
     if (!file) return;
-    try { await searchFromImageElement(await loadImage(file)); }
-    catch (err) { window.alert(err.message); }
+    try {
+      state.extraFriends = [];
+      await searchFromImageElement(await loadImage(file));
+    } catch (err) { window.alert(err.message); }
   };
   $('btnPickQueryFace').addEventListener('click', () => $('fileInputQueryFace').click());
   $('fileInputQueryFace').addEventListener('change', onFacePicked);

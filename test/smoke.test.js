@@ -45,7 +45,7 @@ async function apiTests() {
     assert.ok(html.includes('viewLanding') && html.includes('inputLandingBgGradient'), 'Landing page and gradient selector exist');
     assert.ok(html.includes('btnToggleFaceBoxes') && html.includes('ดูภาพขนาดเต็ม (Google Drive)'), 'Lightbox face box toggle and Drive button label updated');
     assert.ok(html.includes('btnLightboxPrev') && html.includes('btnLightboxNext'), 'Lightbox left/right navigation exists');
-    assert.ok(html.includes('btnToggleFriendSelect') && html.includes('ถ่ายภาพใบหน้า') && html.includes('ใช้ภาพที่มีอยู่'), 'Friend co-occurrence and paired search buttons exist');
+    assert.ok(html.includes('btnOpenAddFriendModal') && html.includes('addFriendModal') && html.includes('ถ่ายภาพใบหน้า') && html.includes('ใช้ภาพที่มีอยู่'), 'Add Friend modal and paired search buttons exist');
     assert.ok(html.includes('lightboxFaceLayer'), 'Tap-a-Face layer exists');
     console.log('  ✅ 1. UI: version 1.026112026, Mobile/Desktop toggle, Admin Login, LINE Share, Event Logo');
 
