@@ -42,6 +42,8 @@ async function apiTests() {
     assert.ok(html.includes('adminLoginModal'), 'Settings login modal exists');
     assert.ok(html.includes('btnShareLineLightbox') && html.includes('btnShareLineSelected'), 'LINE share buttons exist');
     assert.ok(html.includes('inputEventLogoFile'), 'Event logo upload exists');
+    assert.ok(html.includes('viewLanding') && html.includes('inputLandingBgGradient'), 'Landing page and gradient selector exist');
+    assert.ok(html.includes('btnToggleFaceBoxes') && html.includes('ดูภาพขนาดเต็ม (Google Drive)'), 'Lightbox face box toggle and Drive button label updated');
     assert.ok(html.includes('lightboxFaceLayer'), 'Tap-a-Face layer exists');
     console.log('  ✅ 1. UI: version 1.026112026, Mobile/Desktop toggle, Admin Login, LINE Share, Event Logo');
 
@@ -60,11 +62,17 @@ async function apiTests() {
       driveFolderUrl: 'https://drive.google.com/drive/folders/1PinkAlbumSharedFolderId123456?usp=sharing',
       searchEngineMode: 'arcface_gemini',
       geminiApiKey: 'dummy',
-      eventLogoDataUrl: SAMPLE_JPEG_BASE64
+      eventLogoDataUrl: SAMPLE_JPEG_BASE64,
+      bankLogoDataUrl: SAMPLE_JPEG_BASE64,
+      landingTitle1: 'งานสัมมนา RM6',
+      landingBgGradient: 'sunset_rose'
     });
     assert.equal(cfg.driveFolderId, '1PinkAlbumSharedFolderId123456');
     assert.equal(cfg.searchEngineMode, 'arcface_gemini');
     assert.equal(cfg.eventLogoDataUrl, SAMPLE_JPEG_BASE64);
+    assert.equal(cfg.bankLogoDataUrl, SAMPLE_JPEG_BASE64);
+    assert.equal(cfg.landingTitle1, 'งานสัมมนา RM6');
+    assert.equal(cfg.landingBgGradient, 'sunset_rose');
     await postAuth('/api/config', { searchEngineMode: 'arcface' });
     console.log('  ✅ 2. Config: Auth required, Drive folder ID, engine mode & logo saved');
 

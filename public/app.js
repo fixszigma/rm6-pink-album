@@ -8,10 +8,19 @@
  */
 
 const state = {
-  activeTab: 'search',
+  activeTab: 'landing',
   albumTitle: 'RM6 Pink Album',
   eventLogoDataUrl: '',
   pendingLogoDataUrl: undefined,
+  bankLogoDataUrl: '',
+  pendingBankLogoDataUrl: undefined,
+  landingTitle1: '',
+  landingTitle2: '',
+  landingLocation1: '',
+  landingLocation2: '',
+  landingDate: '',
+  landingBgGradient: 'gsb_pink',
+  showFaceBoxes: true,
   driveFolderId: '',
   driveFolderUrl: '',
   driveAuthMode: 'local_only',
@@ -78,11 +87,53 @@ function downscaleToDataUrl(imgOrCanvas, maxDim = 1024, quality = 0.88) {
 // ============================================================================
 
 function switchTab(tab) {
-  state.activeTab = tab === 'upload' ? 'upload' : 'search';
+  state.activeTab = tab === 'upload' ? 'upload' : (tab === 'landing' ? 'landing' : 'search');
+  if ($('mainTopbar')) $('mainTopbar').hidden = state.activeTab === 'landing';
+  if ($('viewLanding')) $('viewLanding').hidden = state.activeTab !== 'landing';
   $('viewSearch').hidden = state.activeTab !== 'search';
   $('viewUpload').hidden = state.activeTab !== 'upload';
   $('tabBtnSearch').classList.toggle('active', state.activeTab === 'search');
   $('tabBtnUpload').classList.toggle('active', state.activeTab === 'upload');
+}
+
+function renderLandingUI() {
+  const card = $('viewLanding');
+  if (!card) return;
+  const grad = state.landingBgGradient || 'gsb_pink';
+  card.className = `landing-card landing-bg-${grad}`;
+
+  const bankImg = $('landingBankLogoImg');
+  const bankFb = $('landingBankLogoFallback');
+  if (bankImg && bankFb) {
+    if (state.bankLogoDataUrl) {
+      bankImg.src = state.bankLogoDataUrl;
+      bankImg.hidden = false;
+      bankFb.hidden = true;
+    } else {
+      bankImg.hidden = true;
+      bankImg.removeAttribute('src');
+      bankFb.hidden = false;
+    }
+  }
+
+  $('landingTitle1El').textContent = state.landingTitle1 || state.albumTitle || 'RM6 Pink Album';
+  const t2 = $('landingTitle2El');
+  if (t2) { t2.textContent = state.landingTitle2 || ''; t2.hidden = !state.landingTitle2; }
+
+  const setMeta = (wrapId, textId, val) => {
+    const w = $(wrapId);
+    const t = $(textId);
+    if (!w || !t) return false;
+    t.textContent = val || '';
+    w.hidden = !val;
+    return Boolean(val);
+  };
+  const anyMeta = [
+    setMeta('landingLoc1Wrap', 'landingLoc1El', state.landingLocation1),
+    setMeta('landingLoc2Wrap', 'landingLoc2El', state.landingLocation2),
+    setMeta('landingDateWrap', 'landingDateEl', state.landingDate)
+  ].some(Boolean);
+  if ($('landingMetaList')) $('landingMetaList').hidden = !anyMeta;
 }
 
 function formatDriveStatusText(mode, folderId, stats) {
@@ -129,6 +180,13 @@ async function fetchStatusAndPhotos() {
   if (statusResp.ok) {
     state.albumTitle = statusResp.albumTitle || 'RM6 Pink Album';
     state.eventLogoDataUrl = statusResp.eventLogoDataUrl || '';
+    state.bankLogoDataUrl = statusResp.bankLogoDataUrl || '';
+    state.landingTitle1 = statusResp.landingTitle1 || '';
+    state.landingTitle2 = statusResp.landingTitle2 || '';
+    state.landingLocation1 = statusResp.landingLocation1 || '';
+    state.landingLocation2 = statusResp.landingLocation2 || '';
+    state.landingDate = statusResp.landingDate || '';
+    state.landingBgGradient = statusResp.landingBgGradient || 'gsb_pink';
     state.driveFolderId = statusResp.driveFolderId || '';
     state.driveFolderUrl = statusResp.driveFolderUrl || '';
     state.driveAuthMode = statusResp.driveAuthMode || 'local_only';
@@ -142,6 +200,7 @@ async function fetchStatusAndPhotos() {
     $('albumTitleHeading').textContent = state.albumTitle;
     document.title = state.albumTitle;
     renderBrandLogoUI();
+    renderLandingUI();
     renderEngineModeUI();
 
     $('aiEngineStatus').textContent = statusResp.arcFaceReady ? 'ArcFace พร้อมใช้งาน' : 'ไม่พบโมเดล ArcFace';
@@ -592,6 +651,9 @@ function openLightbox(photo) {
 
   const drawFaces = () => {
     layer.innerHTML = '';
+    layer.hidden = !state.showFaceBoxes;
+    const toggleBtn = $('btnToggleFaceBoxes');
+    if (toggleBtn) toggleBtn.textContent = state.showFaceBoxes ? '👁️ ซ่อนกรอบหน้า' : '👁️ แสดงกรอบหน้า';
     const nw = photo.width || img.naturalWidth;
     const nh = photo.height || img.naturalHeight;
     if (!nw || !nh || !Array.isArray(photo.faces)) return;
@@ -932,11 +994,23 @@ window.addEventListener('DOMContentLoaded', async () => {
   // Settings (Protected by Admin Login)
   const openConfigModalUI = () => {
     state.pendingLogoDataUrl = undefined;
+    state.pendingBankLogoDataUrl = undefined;
     $('inputAlbumTitle').value = state.albumTitle;
     $('inputDriveFolderUrl').value = state.driveFolderUrl || state.driveFolderId;
     $('inputDefaultEngineMode').value = state.searchEngineMode || 'arcface_gemini';
     $('inputOauthClientId').value = state.oauthClientId || '';
     $('inputNewAdminPassword').value = '';
+    $('inputLandingBgGradient').value = state.landingBgGradient || 'gsb_pink';
+    $('inputLandingTitle1').value = state.landingTitle1 || '';
+    $('inputLandingTitle2').value = state.landingTitle2 || '';
+    $('inputLandingLocation1').value = state.landingLocation1 || '';
+    $('inputLandingLocation2').value = state.landingLocation2 || '';
+    $('inputLandingDate').value = state.landingDate || '';
+    const bankPreview = $('bankLogoPreview');
+    if (bankPreview) {
+      if (state.bankLogoDataUrl) { bankPreview.src = state.bankLogoDataUrl; bankPreview.hidden = false; }
+      else { bankPreview.hidden = true; bankPreview.removeAttribute('src'); }
+    }
     const logoPreview = $('eventLogoPreview');
     if (logoPreview) {
       if (state.eventLogoDataUrl) { logoPreview.src = state.eventLogoDataUrl; logoPreview.hidden = false; }
@@ -987,6 +1061,30 @@ window.addEventListener('DOMContentLoaded', async () => {
     $('adminLoginModal').hidden = true;
     openConfigModalUI();
   });
+
+  if ($('inputBankLogoFile')) {
+    $('inputBankLogoFile').addEventListener('change', async (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      try {
+        const img = await loadImage(file);
+        const dataUrl = downscaleToDataUrl(img, 256, 0.9);
+        state.pendingBankLogoDataUrl = dataUrl;
+        $('bankLogoPreview').src = dataUrl;
+        $('bankLogoPreview').hidden = false;
+      } catch (err) {
+        window.alert(err.message);
+      }
+    });
+  }
+  if ($('btnClearBankLogo')) {
+    $('btnClearBankLogo').addEventListener('click', () => {
+      state.pendingBankLogoDataUrl = '';
+      $('inputBankLogoFile').value = '';
+      $('bankLogoPreview').hidden = true;
+      $('bankLogoPreview').removeAttribute('src');
+    });
+  }
 
   if ($('inputEventLogoFile')) {
     $('inputEventLogoFile').addEventListener('change', async (e) => {
@@ -1072,10 +1170,19 @@ window.addEventListener('DOMContentLoaded', async () => {
       albumTitle: $('inputAlbumTitle').value.trim(),
       driveFolderUrl: $('inputDriveFolderUrl').value.trim(),
       searchEngineMode: mode,
-      faceMatchThreshold: Number($('thresholdSlider').value) || 0.40
+      faceMatchThreshold: Number($('thresholdSlider').value) || 0.40,
+      landingBgGradient: $('inputLandingBgGradient') ? $('inputLandingBgGradient').value : 'gsb_pink',
+      landingTitle1: $('inputLandingTitle1') ? $('inputLandingTitle1').value.trim() : '',
+      landingTitle2: $('inputLandingTitle2') ? $('inputLandingTitle2').value.trim() : '',
+      landingLocation1: $('inputLandingLocation1') ? $('inputLandingLocation1').value.trim() : '',
+      landingLocation2: $('inputLandingLocation2') ? $('inputLandingLocation2').value.trim() : '',
+      landingDate: $('inputLandingDate') ? $('inputLandingDate').value.trim() : ''
     };
     if (state.pendingLogoDataUrl !== undefined) {
       payload.eventLogoDataUrl = state.pendingLogoDataUrl;
+    }
+    if (state.pendingBankLogoDataUrl !== undefined) {
+      payload.bankLogoDataUrl = state.pendingBankLogoDataUrl;
     }
     const newPwd = $('inputNewAdminPassword') ? $('inputNewAdminPassword').value.trim() : '';
     if (newPwd) payload.newAdminPassword = newPwd;
@@ -1109,7 +1216,19 @@ window.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
-  // LINE Share buttons
+  // LINE Share & Lightbox face box toggle
+  if ($('btnToggleFaceBoxes')) {
+    $('btnToggleFaceBoxes').addEventListener('click', () => {
+      state.showFaceBoxes = !state.showFaceBoxes;
+      const layer = $('lightboxFaceLayer');
+      if (layer) layer.hidden = !state.showFaceBoxes;
+      $('btnToggleFaceBoxes').textContent = state.showFaceBoxes ? '👁️ ซ่อนกรอบหน้า' : '👁️ แสดงกรอบหน้า';
+    });
+  }
+  if ($('btnLandingSearch')) $('btnLandingSearch').addEventListener('click', () => switchTab('search'));
+  if ($('btnLandingUpload')) $('btnLandingUpload').addEventListener('click', () => switchTab('upload'));
+  if ($('brandHomeBtn')) $('brandHomeBtn').addEventListener('click', () => switchTab('landing'));
+  switchTab('landing');
   if ($('btnShareLineLightbox')) {
     $('btnShareLineLightbox').addEventListener('click', () => {
       if (state.currentLightboxPhoto) sharePhotosViaLine([state.currentLightboxPhoto]);

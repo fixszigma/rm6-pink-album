@@ -13,9 +13,9 @@
 </head>
 <body>
   <!-- Minimal Top Bar with Separate Search vs Upload Menu -->
-  <header class="topbar">
+  <header class="topbar" id="mainTopbar" hidden>
     <div class="topbar-inner">
-      <div class="brand">
+      <div class="brand" id="brandHomeBtn" role="button" tabindex="0" title="กลับหน้าหลัก" style="cursor: pointer;">
         <div class="brand-dot" id="brandLogoBox">
           <span id="brandLogoEmoji">🌸</span>
           <img id="brandLogoImg" src="" alt="Logo" hidden />
@@ -53,8 +53,43 @@
       </div>
     </div>
 
-    <!-- TAB 1 (DEFAULT): SEARCH & ATTENDEE GALLERY -->
-    <div id="viewSearch" style="display: flex; flex-direction: column; gap: 12px;">
+    <!-- TAB 0 (LANDING PAGE): WELCOME SCREEN -->
+    <section class="landing-card landing-bg-gsb_pink" id="viewLanding">
+      <div class="landing-bank-logo-wrap">
+        <img id="landingBankLogoImg" src="" alt="โลโก้ธนาคาร" hidden />
+        <div class="landing-bank-logo-fallback" id="landingBankLogoFallback">🏦</div>
+      </div>
+
+      <h2 class="landing-title-1" id="landingTitle1El">RM6 Pink Album</h2>
+      <p class="landing-title-2" id="landingTitle2El" hidden></p>
+
+      <div class="landing-meta-list" id="landingMetaList" hidden>
+        <div class="landing-meta-item" id="landingLoc1Wrap" hidden>📍 <span id="landingLoc1El"></span></div>
+        <div class="landing-meta-item" id="landingLoc2Wrap" hidden>🏢 <span id="landingLoc2El"></span></div>
+        <div class="landing-meta-item" id="landingDateWrap" hidden>📅 <span id="landingDateEl"></span></div>
+      </div>
+
+      <div class="landing-cta-group">
+        <button class="btn btn-primary landing-btn-main" id="btnLandingSearch" type="button">
+          🔍 ค้นหารูปภาพ
+        </button>
+        <button class="btn btn-soft landing-btn-sub" id="btnLandingUpload" type="button">
+          📤 อัปโหลดรูป (ตากล้อง)
+        </button>
+      </div>
+
+      <div class="landing-guide">
+        <div class="landing-guide-title">วิธีใช้งานสั้นๆ</div>
+        <ol class="landing-guide-steps">
+          <li>กด <b>ค้นหารูปภาพ</b> แล้วถ่ายเซลฟีหรือเลือกรูปหน้าของคุณ</li>
+          <li>ระบบ AI จะค้นหารูปทั้งหมดที่มีคุณในงานขึ้นมาให้ทันที</li>
+          <li>กดแชร์ส่งต่อให้เพื่อนทาง LINE หรือดาวน์โหลดเก็บเป็นไฟล์ ZIP</li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- TAB 1: SEARCH & ATTENDEE GALLERY -->
+    <div id="viewSearch" hidden style="display: flex; flex-direction: column; gap: 12px;">
       <!-- Minimal Face Search Card -->
       <section class="surface-card search-bar-card">
         <div class="search-top-row">
@@ -279,8 +314,51 @@
           <input type="text" id="inputDriveFolderUrl" placeholder="https://drive.google.com/drive/folders/..." />
         </div>
 
+        <details style="margin-bottom: 14px; font-size: 0.84rem; color: var(--text);">
+          <summary style="cursor: pointer; font-weight: 600; margin-bottom: 10px; color: var(--pink-700);">🏠 จัดการหน้าหลัก (Landing Page)</summary>
+          <div class="form-group">
+            <label for="inputBankLogoFile">โลโก้ธนาคาร (จัดวางกลางด้านบน ขนาดพอดี)</label>
+            <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+              <img id="bankLogoPreview" src="" alt="Bank Logo" style="width: 48px; height: 48px; border-radius: 10px; object-fit: contain; border: 1px solid var(--border); background: #fff;" hidden />
+              <input type="file" id="inputBankLogoFile" accept="image/*" style="flex: 1; min-width: 180px;" />
+              <button class="btn btn-ghost" id="btnClearBankLogo" type="button" style="padding: 5px 10px; font-size: 0.78rem;">ล้างโลโก้ธนาคาร</button>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="inputLandingBgGradient">สีพื้นหลังหน้าหลัก (Gradient)</label>
+            <select id="inputLandingBgGradient">
+              <option value="gsb_pink">🌸 ชมพูออมสินนุ่มนวล (GSB Pink)</option>
+              <option value="pink_vibrant">💖 ชมพูไล่เฉดสดใส (Vibrant Pink)</option>
+              <option value="sunset_rose">🌅 ชมพู-พีชพาสเทล (Sunset Rose)</option>
+              <option value="lavender_pink">💜 ชมพู-ม่วงลาเวนเดอร์ (Lavender Pink)</option>
+              <option value="ocean_sky">🩵 ฟ้า-ขาวสะอาด (Ocean Sky)</option>
+              <option value="clean_white">🤍 ขาว-เทามินิมอล (Clean White)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="inputLandingTitle1">ชื่องาน (Title 1 หลัก)</label>
+            <input type="text" id="inputLandingTitle1" placeholder="เช่น งานสัมมนาธนาคารออมสินภาค 6" />
+          </div>
+          <div class="form-group">
+            <label for="inputLandingTitle2">รายละเอียดเพิ่มเติม (Title 2)</label>
+            <input type="text" id="inputLandingTitle2" placeholder="เช่น ประมวลภาพความประทับใจตลอดทั้งวัน" />
+          </div>
+          <div class="form-group">
+            <label for="inputLandingLocation1">สถานที่ (1)</label>
+            <input type="text" id="inputLandingLocation1" placeholder="เช่น ห้องแกรนด์บอลรูม" />
+          </div>
+          <div class="form-group">
+            <label for="inputLandingLocation2">สถานที่ (2)</label>
+            <input type="text" id="inputLandingLocation2" placeholder="เช่น โรงแรม... จ. ..." />
+          </div>
+          <div class="form-group">
+            <label for="inputLandingDate">วันที่จัดงาน</label>
+            <input type="text" id="inputLandingDate" placeholder="เช่น 26 พฤศจิกายน 2569" />
+          </div>
+        </details>
+
         <details style="margin-bottom: 14px; font-size: 0.82rem; color: var(--text-muted);">
-          <summary style="cursor: pointer; font-weight: 500; margin-bottom: 8px;">ตั้งค่าขั้นสูง (เชื่อม Google Drive / สแกนใบหน้าใหม่)</summary>
+          <summary style="cursor: pointer; font-weight: 500; margin-bottom: 8px;">ตั้งค่าขั้นสูง (เชื่อม Google Drive / รหัสผู้ดูแล / สแกนใบหน้า)</summary>
           <div class="form-group">
             <label for="inputOauthClientId">Google OAuth Client ID (สำหรับส่งรูปเข้า Drive ส่วนตัว)</label>
             <input type="text" id="inputOauthClientId" placeholder="xxxx.apps.googleusercontent.com" />
@@ -369,14 +447,15 @@
           <div id="lightboxFaceLayer"></div>
         </div>
       </div>
-      <div id="lightboxFaceHint" style="font-size: 0.78rem; color: var(--pink-600); margin-top: 8px;" hidden>
-        👆 แตะกรอบสีชมพูที่ใบหน้าเพื่อค้นหารูปทั้งหมดของคนนั้น
+      <div id="lightboxFaceHint" style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; font-size: 0.78rem; color: var(--pink-600); margin-top: 8px;" hidden>
+        <span>👆 แตะกรอบสีชมพูที่ใบหน้าเพื่อค้นหารูปทั้งหมดของคนนั้น</span>
+        <button id="btnToggleFaceBoxes" class="btn btn-ghost" type="button" style="padding: 4px 10px; font-size: 0.76rem;">👁️ ซ่อนกรอบหน้า</button>
       </div>
       <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-top: 12px;">
         <div id="lightboxMetaText" style="font-size: 0.8rem; color: var(--text-muted);"></div>
         <div style="display: flex; gap: 6px; flex-wrap: wrap;">
           <button id="btnShareLineLightbox" class="btn btn-soft" type="button">💬 แชร์ผ่าน LINE</button>
-          <a id="lightboxDriveLink" class="btn btn-ghost" href="#" target="_blank" rel="noopener" hidden>Google Drive</a>
+          <a id="lightboxDriveLink" class="btn btn-ghost" href="#" target="_blank" rel="noopener" hidden>ดูภาพขนาดเต็ม (Google Drive)</a>
           <a id="lightboxDownloadLink" class="btn btn-primary" href="#" download>ดาวน์โหลด</a>
         </div>
       </div>

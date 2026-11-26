@@ -131,6 +131,13 @@ function createAppServer(options = {}) {
   let config = {
     albumTitle: process.env.ALBUM_TITLE || 'RM6 Pink Album',
     eventLogoDataUrl: '',
+    bankLogoDataUrl: '',
+    landingTitle1: '',
+    landingTitle2: '',
+    landingLocation1: '',
+    landingLocation2: '',
+    landingDate: '',
+    landingBgGradient: 'gsb_pink',
     adminPassword: process.env.ADMIN_PASSWORD || 'rm6admin',
     driveFolderUrl: defaultFolderUrl || buildDriveFolderWebUrl(defaultFolderId),
     driveFolderId: defaultFolderId,
@@ -396,6 +403,20 @@ function createAppServer(options = {}) {
           appVersion: '1.026112026',
           albumTitle: config.albumTitle,
           eventLogoDataUrl: config.eventLogoDataUrl || '',
+          bankLogoDataUrl: config.bankLogoDataUrl || '',
+          landingTitle1: config.landingTitle1 || '',
+          landingTitle2: config.landingTitle2 || '',
+          landingLocation1: config.landingLocation1 || '',
+          landingLocation2: config.landingLocation2 || '',
+          landingDate: config.landingDate || '',
+          landingBgGradient: config.landingBgGradient || 'gsb_pink',
+          bankLogoDataUrl: config.bankLogoDataUrl || '',
+          landingTitle1: config.landingTitle1 || '',
+          landingTitle2: config.landingTitle2 || '',
+          landingLocation1: config.landingLocation1 || '',
+          landingLocation2: config.landingLocation2 || '',
+          landingDate: config.landingDate || '',
+          landingBgGradient: config.landingBgGradient || 'gsb_pink',
           driveFolderId: folderId,
           driveFolderUrl: folderId ? buildDriveFolderWebUrl(folderId) : (config.driveFolderUrl || ''),
           driveAuthMode: getDriveAuthMode(config),
@@ -445,6 +466,17 @@ function createAppServer(options = {}) {
         }
         if (typeof body.eventLogoDataUrl === 'string') {
           config.eventLogoDataUrl = body.eventLogoDataUrl.trim();
+        }
+        if (typeof body.bankLogoDataUrl === 'string') {
+          config.bankLogoDataUrl = body.bankLogoDataUrl.trim();
+        }
+        if (typeof body.landingTitle1 === 'string') config.landingTitle1 = body.landingTitle1.trim();
+        if (typeof body.landingTitle2 === 'string') config.landingTitle2 = body.landingTitle2.trim();
+        if (typeof body.landingLocation1 === 'string') config.landingLocation1 = body.landingLocation1.trim();
+        if (typeof body.landingLocation2 === 'string') config.landingLocation2 = body.landingLocation2.trim();
+        if (typeof body.landingDate === 'string') config.landingDate = body.landingDate.trim();
+        if (typeof body.landingBgGradient === 'string' && body.landingBgGradient.trim()) {
+          config.landingBgGradient = body.landingBgGradient.trim();
         }
         if (typeof body.newAdminPassword === 'string' && body.newAdminPassword.trim()) {
           config.adminPassword = body.newAdminPassword.trim();
@@ -512,6 +544,20 @@ function createAppServer(options = {}) {
           appVersion: '1.026112026',
           albumTitle: config.albumTitle,
           eventLogoDataUrl: config.eventLogoDataUrl || '',
+          bankLogoDataUrl: config.bankLogoDataUrl || '',
+          landingTitle1: config.landingTitle1 || '',
+          landingTitle2: config.landingTitle2 || '',
+          landingLocation1: config.landingLocation1 || '',
+          landingLocation2: config.landingLocation2 || '',
+          landingDate: config.landingDate || '',
+          landingBgGradient: config.landingBgGradient || 'gsb_pink',
+          bankLogoDataUrl: config.bankLogoDataUrl || '',
+          landingTitle1: config.landingTitle1 || '',
+          landingTitle2: config.landingTitle2 || '',
+          landingLocation1: config.landingLocation1 || '',
+          landingLocation2: config.landingLocation2 || '',
+          landingDate: config.landingDate || '',
+          landingBgGradient: config.landingBgGradient || 'gsb_pink',
           driveFolderId: config.driveFolderId,
           driveFolderUrl: config.driveFolderUrl,
           driveAuthMode: getDriveAuthMode(config),
