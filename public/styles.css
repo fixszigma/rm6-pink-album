@@ -558,6 +558,37 @@ select {
   box-shadow: 0 8px 24px rgba(236, 0, 140, 0.25);
 }
 
+.active-search-avatars-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.active-search-extra-avatars {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.active-search-plus {
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: var(--pink-500);
+}
+
+.active-search-thumb-friend {
+  width: 112px;
+  height: 112px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 3px solid #7c3aed;
+  box-shadow: 0 6px 18px rgba(124, 58, 237, 0.22);
+}
+
 .active-search-text {
   font-size: 0.86rem;
   font-weight: 500;

@@ -261,7 +261,7 @@ function renderClusters() {
   $('statTotalClusters').textContent = display.length;
 
   for (const cluster of display) {
-    const isActive = state.activeClusterId === cluster.id;
+    const isActive = !state.friendSelectMode && state.activeClusterId === cluster.id;
     const isFriendPicked = state.selectedFriendClusterIds.includes(cluster.id);
     const item = document.createElement('div');
     item.className = `cluster-item${isActive ? ' active' : ''}${isFriendPicked ? ' friend-picked' : ''}`;
@@ -421,6 +421,7 @@ function syncFilterBannerUI() {
   $('activeSearchBar').hidden = !filtered;
 
   const thumb = $('queryFacePreviewImg');
+  const extraWrap = $('queryFriendAvatarsWrap');
   const title = $('activeFilterTitle');
   const tagWrap = $('activeEngineTagWrap');
   const sub = $('activeFilterSub');
@@ -428,10 +429,37 @@ function syncFilterBannerUI() {
   if (!filtered) {
     thumb.hidden = true;
     thumb.removeAttribute('src');
+    if (extraWrap) { extraWrap.innerHTML = ''; extraWrap.hidden = true; }
     tagWrap.innerHTML = '';
     sub.textContent = '';
     return;
   }
+
+  const renderFriendAvatars = (ids, includePlusBeforeFirst) => {
+    if (!extraWrap) return;
+    extraWrap.innerHTML = '';
+    if (!ids || !ids.length) {
+      extraWrap.hidden = true;
+      return;
+    }
+    ids.forEach((cid, i) => {
+      const c = state.clusters.find((x) => x.id === cid);
+      if (!c || !c.avatarDataUrl) return;
+      if (includePlusBeforeFirst || i > 0) {
+        const plus = document.createElement('span');
+        plus.className = 'active-search-plus';
+        plus.textContent = '+';
+        extraWrap.appendChild(plus);
+      }
+      const imgEl = document.createElement('img');
+      imgEl.className = 'active-search-thumb-friend';
+      imgEl.src = c.avatarDataUrl;
+      imgEl.alt = c.label || 'เพื่อน';
+      imgEl.title = c.label || '';
+      extraWrap.appendChild(imgEl);
+    });
+    extraWrap.hidden = extraWrap.children.length === 0;
+  };
 
   const visibleCount = getVisiblePhotos().length;
   if (hasSearch) {
@@ -439,6 +467,7 @@ function syncFilterBannerUI() {
       ? state.lastSearchMeta.queryFaceAvatarUrl
       : (state.lastQuery && state.lastQuery.avatarUrl) || '';
     if (avatar) { thumb.src = avatar; thumb.hidden = false; } else { thumb.hidden = true; }
+    renderFriendAvatars(hasFriends ? state.selectedFriendClusterIds : [], Boolean(avatar));
 
     title.textContent = `พบ ${visibleCount} รูปที่ตรงกัน`;
     tagWrap.innerHTML = renderAiGraphicTag(hasFriends ? `✨ พบภาพที่มีเพื่อนร่วมเฟรม (${state.selectedFriendClusterIds.length} คน)` : '✨ ค้นหาภาพด้วย AI สำเร็จ');
@@ -451,6 +480,7 @@ function syncFilterBannerUI() {
   } else if (hasFriends) {
     const firstC = state.clusters.find((x) => x.id === state.selectedFriendClusterIds[0]);
     if (firstC && firstC.avatarDataUrl) { thumb.src = firstC.avatarDataUrl; thumb.hidden = false; } else { thumb.hidden = true; }
+    renderFriendAvatars(state.selectedFriendClusterIds.slice(1), Boolean(firstC && firstC.avatarDataUrl));
     const names = state.selectedFriendClusterIds
       .map((cid) => (state.clusters.find((x) => x.id === cid) || {}).label)
       .filter(Boolean)
@@ -461,6 +491,7 @@ function syncFilterBannerUI() {
   } else {
     const c = state.clusters.find((x) => x.id === state.activeClusterId);
     if (c && c.avatarDataUrl) { thumb.src = c.avatarDataUrl; thumb.hidden = false; } else { thumb.hidden = true; }
+    renderFriendAvatars([], false);
     title.textContent = `${c ? c.label : 'บุคคลที่เลือก'} (${visibleCount} รูป)`;
     tagWrap.innerHTML = renderAiGraphicTag('👤 คัดแยกบุคคลอัตโนมัติ');
     sub.textContent = '';
@@ -1323,6 +1354,9 @@ window.addEventListener('DOMContentLoaded', async () => {
   if ($('btnToggleFriendSelect')) {
     $('btnToggleFriendSelect').addEventListener('click', () => {
       state.friendSelectMode = !state.friendSelectMode;
+      if (state.friendSelectMode) {
+        state.activeClusterId = null;
+      }
       renderFriendGroupBar();
       renderClusters();
     });
