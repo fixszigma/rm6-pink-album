@@ -638,6 +638,65 @@ select {
   border-color: var(--pink-500);
 }
 
+.cfg-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  background: var(--pink-50);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px;
+  margin-bottom: 14px;
+}
+
+.cfg-tab {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  font-weight: 600;
+  padding: 8px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.cfg-tab.active {
+  background: var(--pink-500);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(236, 0, 140, 0.22);
+}
+
+.friend-selfie-preview-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  border-radius: 12px;
+  background: var(--pink-50);
+  border: 1px solid var(--pink-200);
+}
+
+.friend-selfie-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.friend-selfie-chip img {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid #7c3aed;
+}
+
 .friend-picker-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));

@@ -235,7 +235,9 @@ async function fetchStatusAndPhotos() {
 
 function updateStatsUI(stats) {
   if (!stats) return;
-  $('statTotalPhotos').textContent = stats.totalPhotos || 0;
+  const total = stats.totalPhotos || 0;
+  $('statTotalPhotos').textContent = total;
+  if ($('landingPhotoCountSpan')) $('landingPhotoCountSpan').textContent = total;
   const hogEl = $('statHogStatus');
   if (hogEl) hogEl.textContent = `ArcFace 512-D ${stats.arcfaceFaces || 0}/${stats.totalFaces || 0} ใบหน้า`;
   const btn = $('btnReindexUnindexed');
@@ -330,6 +332,25 @@ function renderFriendPickerModal() {
   const grid = $('friendPickerGrid');
   const countEl = $('friendModalCountSpan');
   if (countEl) countEl.textContent = String(1 + state.extraFriends.length);
+
+  const previewWrap = $('friendSelfiePreviewWrap');
+  const previewList = $('friendSelfiePreviewList');
+  const selfieFriends = state.extraFriends.filter((f) => String(f.key).startsWith('selfie_'));
+  if (previewWrap && previewList) {
+    previewList.innerHTML = '';
+    if (selfieFriends.length > 0) {
+      selfieFriends.forEach((sf) => {
+        const chip = document.createElement('div');
+        chip.className = 'friend-selfie-chip';
+        chip.innerHTML = `<img src="${sf.avatarUrl || ''}" alt="${sf.label}" /><span>${sf.label} (${sf.photoIds.size} รูป)</span>`;
+        previewList.appendChild(chip);
+      });
+      previewWrap.hidden = false;
+    } else {
+      previewWrap.hidden = true;
+    }
+  }
+
   if (!grid) return;
   grid.innerHTML = '';
 
@@ -810,6 +831,7 @@ function openLightbox(photo) {
   const nextBtn = $('btnLightboxNext');
   if (prevBtn) prevBtn.disabled = idx <= 0;
   if (nextBtn) nextBtn.disabled = idx < 0 || idx >= visible.length - 1;
+  if ($('btnDeletePhotoAdmin')) $('btnDeletePhotoAdmin').hidden = !getAdminToken();
   const img = $('lightboxImg');
   const layer = $('lightboxFaceLayer');
   layer.innerHTML = '';
@@ -1169,8 +1191,20 @@ window.addEventListener('DOMContentLoaded', async () => {
     await rescan();
   });
 
+  // Settings 2-Tab Switcher (ตกแต่ง / Admin)
+  const switchConfigTab = (tab) => {
+    const isDecor = tab !== 'admin';
+    if ($('cfgPanelDecor')) $('cfgPanelDecor').hidden = !isDecor;
+    if ($('cfgPanelAdmin')) $('cfgPanelAdmin').hidden = isDecor;
+    if ($('cfgTabBtnDecor')) $('cfgTabBtnDecor').classList.toggle('active', isDecor);
+    if ($('cfgTabBtnAdmin')) $('cfgTabBtnAdmin').classList.toggle('active', !isDecor);
+  };
+  if ($('cfgTabBtnDecor')) $('cfgTabBtnDecor').addEventListener('click', () => switchConfigTab('decor'));
+  if ($('cfgTabBtnAdmin')) $('cfgTabBtnAdmin').addEventListener('click', () => switchConfigTab('admin'));
+
   // Settings (Protected by Admin Login)
   const openConfigModalUI = () => {
+    switchConfigTab('decor');
     state.pendingLogoDataUrl = undefined;
     state.pendingBankLogoDataUrl = undefined;
     $('inputAlbumTitle').value = state.albumTitle;
@@ -1407,6 +1441,40 @@ window.addEventListener('DOMContentLoaded', async () => {
   };
   if ($('fileInputFriendSelfie')) $('fileInputFriendSelfie').addEventListener('change', onFriendFacePicked);
   if ($('fileInputFriendPhoto')) $('fileInputFriendPhoto').addEventListener('change', onFriendFacePicked);
+  if ($('btnRetakeFriendSelfie')) {
+    $('btnRetakeFriendSelfie').addEventListener('click', () => {
+      const idx = state.extraFriends.map((f) => String(f.key).startsWith('selfie_')).lastIndexOf(true);
+      if (idx >= 0) {
+        state.extraFriends.splice(idx, 1);
+        renderFriendPickerModal();
+        syncFilterBannerUI();
+        renderPhotoGrid();
+      }
+      openSelfieCamera('friend');
+    });
+  }
+  if ($('btnDeletePhotoAdmin')) {
+    $('btnDeletePhotoAdmin').addEventListener('click', async () => {
+      const photo = state.currentLightboxPhoto;
+      if (!photo) return;
+      if (!window.confirm(`ยืนยันการลบรูป "${photo.name}" ใช่หรือไม่?`)) return;
+      const resp = await fetch(`/api/photos/${encodeURIComponent(photo.id)}`, {
+        method: 'DELETE',
+        headers: { 'x-admin-token': getAdminToken() }
+      }).then((r) => r.json());
+      if (!resp.ok) {
+        window.alert(resp.error || 'ลบรูปไม่สำเร็จ');
+        return;
+      }
+      $('lightboxModal').hidden = true;
+      state.selectedPhotoIds.delete(photo.id);
+      if (Array.isArray(state.searchMatches)) {
+        state.searchMatches = state.searchMatches.filter((m) => m.id !== photo.id);
+      }
+      await fetchStatusAndPhotos();
+      syncFilterBannerUI();
+    });
+  }
   if ($('btnLightboxPrev')) $('btnLightboxPrev').addEventListener('click', () => stepLightbox(-1));
   if ($('btnLightboxNext')) $('btnLightboxNext').addEventListener('click', () => stepLightbox(1));
   document.addEventListener('keydown', (e) => {

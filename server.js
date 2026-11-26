@@ -1233,10 +1233,31 @@ function createAppServer(options = {}) {
         return res.end(zipBuf);
       }
 
-      // 10. DELETE /api/photos/:id (Disabled: photo deletion is not allowed)
+      // 10. DELETE /api/photos/:id (Admin only; non-admin requests receive 403)
       const deleteMatch = pathname.match(/^\/api\/photos\/([a-zA-Z0-9_-]+)$/);
       if (method === 'DELETE' && deleteMatch) {
-        return sendJson(res, 403, { ok: false, error: 'ไม่อนุญาตให้ลบรูปภาพออกจากระบบ' });
+        if (!isAdminAuthorized(req)) {
+          return sendJson(res, 403, { ok: false, error: 'ไม่อนุญาตให้ลบรูปภาพออกจากระบบ (เฉพาะผู้ดูแลระบบ)' });
+        }
+        const photoId = deleteMatch[1];
+        const idx = db.photos.findIndex((p) => p.id === photoId);
+        if (idx === -1) {
+          return sendJson(res, 404, { ok: false, error: 'ไม่พบรูปภาพนี้' });
+        }
+        const [removed] = db.photos.splice(idx, 1);
+        if (removed.origFileName) {
+          await fsp.unlink(path.join(originalsDir, removed.origFileName)).catch(() => {});
+        }
+        if (removed.thumbFileName) {
+          await fsp.unlink(path.join(thumbsDir, removed.thumbFileName)).catch(() => {});
+        }
+        db.clusters = recomputeClusters(db.photos, db.clusters, config.clusterThreshold || DEFAULT_CLUSTER_COSINE);
+        saveDb();
+        return sendJson(res, 200, {
+          ok: true,
+          clusters: db.clusters.map(buildPublicClusterView),
+          stats: getStats()
+        });
       }
 
       // 11. Static files in public/

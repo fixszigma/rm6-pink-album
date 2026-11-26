@@ -46,6 +46,7 @@ async function apiTests() {
     assert.ok(html.includes('btnToggleFaceBoxes') && html.includes('ดูภาพขนาดเต็ม (Google Drive)'), 'Lightbox face box toggle and Drive button label updated');
     assert.ok(html.includes('btnLightboxPrev') && html.includes('btnLightboxNext'), 'Lightbox left/right navigation exists');
     assert.ok(html.includes('btnOpenAddFriendModal') && html.includes('addFriendModal') && html.includes('ถ่ายภาพใบหน้า') && html.includes('ใช้ภาพที่มีอยู่'), 'Add Friend modal and paired search buttons exist');
+    assert.ok(html.includes('cfgTabBtnDecor') && html.includes('cfgTabBtnAdmin') && html.includes('landingPhotoCountSpan') && html.includes('btnDeletePhotoAdmin'), '2-tab settings, landing photo count, and admin delete exist');
     assert.ok(html.includes('lightboxFaceLayer'), 'Tap-a-Face layer exists');
     console.log('  ✅ 1. UI: version 1.026112026, Mobile/Desktop toggle, Admin Login, LINE Share, Event Logo');
 
@@ -119,8 +120,13 @@ async function apiTests() {
     const zipBuf = Buffer.from(await zipResp.arrayBuffer());
     assert.equal(zipBuf.readUInt32LE(0), 0x04034b50);
     const delResp = await fetch(`${base}/api/photos/${s.results[0].id}`, { method: 'DELETE' });
-    assert.equal(delResp.status, 403, 'photo deletion must be blocked');
-    console.log('  ✅ 6. ZIP download valid & photo deletion blocked (403)');
+    assert.equal(delResp.status, 403, 'non-admin photo deletion must be blocked');
+    const delAdminResp = await fetch(`${base}/api/photos/${s.results[0].id}`, {
+      method: 'DELETE',
+      headers: { 'x-admin-token': login.token }
+    });
+    assert.equal(delAdminResp.status, 200, 'admin photo deletion must succeed');
+    console.log('  ✅ 6. ZIP download valid & photo deletion restricted to Admin only');
   } finally {
     await new Promise((r) => server.close(r));
     fs.rmSync(tmpRoot, { recursive: true, force: true });

@@ -74,7 +74,7 @@
           🔍 ค้นหารูปภาพ
         </button>
         <button class="btn btn-soft landing-btn-sub" id="btnLandingUpload" type="button">
-          📤 อัปโหลดรูป (ตากล้อง)
+          📤 อัปโหลดรูป (ตากล้อง) • <span id="landingPhotoCountSpan">0</span> รูป
         </button>
       </div>
 
@@ -84,12 +84,24 @@
           <li>กด <b>ค้นหารูปภาพ</b> แล้วถ่ายเซลฟีหรือเลือกรูปหน้าของคุณ</li>
           <li>ระบบ AI จะค้นหารูปทั้งหมดที่มีคุณในงานขึ้นมาให้ทันที</li>
           <li>กดแชร์ส่งต่อให้เพื่อนทาง LINE หรือดาวน์โหลดเก็บเป็นไฟล์ ZIP</li>
+          <li>โปรด <b>Download รูปภาพ</b> ลงอุปกรณ์ของท่านภายใน 5 วัน</li>
         </ol>
       </div>
     </section>
 
     <!-- TAB 1: SEARCH & ATTENDEE GALLERY -->
     <div id="viewSearch" hidden style="display: flex; flex-direction: column; gap: 12px;">
+      <!-- People Face Clusters (Placed above Face Search Card) -->
+      <section class="surface-card" id="clusterSection">
+        <div class="section-head">
+          <h2 class="section-title">บุคคลในงาน (<span id="statTotalClusters">0</span>)</h2>
+          <button class="btn btn-ghost" id="btnReindexUnindexed" type="button" style="font-size: 0.76rem; padding: 4px 10px;" hidden>
+            ⚡ สแกนค้าง (<span id="unindexedCountSpan">0</span>)
+          </button>
+        </div>
+        <div class="cluster-strip" id="clusterStrip"></div>
+      </section>
+
       <!-- Minimal Face Search Card -->
       <section class="surface-card search-bar-card">
         <div class="search-header-row">
@@ -162,17 +174,6 @@
             </button>
           </div>
         </div>
-      </section>
-
-      <!-- People Face Clusters -->
-      <section class="surface-card" id="clusterSection">
-        <div class="section-head">
-          <h2 class="section-title">บุคคลในงาน (<span id="statTotalClusters">0</span>)</h2>
-          <button class="btn btn-ghost" id="btnReindexUnindexed" type="button" style="font-size: 0.76rem; padding: 4px 10px;" hidden>
-            ⚡ สแกนค้าง (<span id="unindexedCountSpan">0</span>)
-          </button>
-        </div>
-        <div class="cluster-strip" id="clusterStrip"></div>
       </section>
 
       <!-- Photo Grid -->
@@ -276,7 +277,7 @@
     </div>
   </div>
 
-  <!-- Modal 1: Settings (Google Drive + Gemini API Key) -->
+  <!-- Modal 1: Settings (2 Tabs: ตกแต่ง / Admin) -->
   <div class="modal-backdrop" id="configModal" hidden>
     <div class="modal-box">
       <div class="modal-header">
@@ -284,52 +285,31 @@
         <button class="close-btn" data-close-modal="configModal" type="button">✕</button>
       </div>
 
+      <div class="cfg-tabs" role="tablist">
+        <button class="cfg-tab active" id="cfgTabBtnDecor" type="button">🎨 ตกแต่ง</button>
+        <button class="cfg-tab" id="cfgTabBtnAdmin" type="button">🔧 Admin</button>
+      </div>
+
       <form id="configForm">
-        <div class="form-group">
-          <label for="inputAlbumTitle">ชื่ออัลบั้ม / ชื่องาน</label>
-          <input type="text" id="inputAlbumTitle" placeholder="RM6 Pink Album" />
-        </div>
-
-        <div class="form-group">
-          <label for="inputEventLogoFile">ภาพโลโก้งาน (แสดงที่หัวเว็บ)</label>
-          <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
-            <img id="eventLogoPreview" src="" alt="Logo Preview" style="width: 44px; height: 44px; border-radius: 10px; object-fit: cover; border: 1px solid var(--border);" hidden />
-            <input type="file" id="inputEventLogoFile" accept="image/*" style="flex: 1; min-width: 180px;" />
-            <button class="btn btn-ghost" id="btnClearEventLogo" type="button" style="padding: 5px 10px; font-size: 0.78rem;">ล้างโลโก้</button>
+        <!-- Tab 1: ตกแต่ง (Landing Page + ชื่องาน + โลโก้) -->
+        <div id="cfgPanelDecor">
+          <div class="form-group">
+            <label for="inputAlbumTitle">ชื่ออัลบั้ม / ชื่องาน</label>
+            <input type="text" id="inputAlbumTitle" placeholder="RM6 Pink Album" />
           </div>
-        </div>
 
-        <div class="form-group">
-          <label for="inputGeminiApiKey">Gemini API Key (วิเคราะห์ใบหน้าแม่นยำสูง)</label>
-          <div style="display: flex; gap: 6px;">
-            <input type="password" id="inputGeminiApiKey" placeholder="AIzaSy... หรือ AQ..." autocomplete="off" style="flex: 1;" />
-            <button class="btn btn-soft" id="btnTestGeminiKey" type="button" style="white-space: nowrap; padding: 6px 12px; font-size: 0.8rem;">
-              ทดสอบคีย์
-            </button>
+          <div class="form-group">
+            <label for="inputEventLogoFile">ภาพโลโก้งาน (แสดงที่หัวเว็บ)</label>
+            <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+              <img id="eventLogoPreview" src="" alt="Logo Preview" style="width: 44px; height: 44px; border-radius: 10px; object-fit: cover; border: 1px solid var(--border);" hidden />
+              <input type="file" id="inputEventLogoFile" accept="image/*" style="flex: 1; min-width: 180px;" />
+              <button class="btn btn-ghost" id="btnClearEventLogo" type="button" style="padding: 5px 10px; font-size: 0.78rem;">ล้างโลโก้</button>
+            </div>
           </div>
-          <div id="geminiTestResult" style="font-size: 0.78rem; margin-top: 5px;" hidden></div>
-        </div>
 
-        <div class="form-group">
-          <label for="inputDefaultEngineMode">ระบบวิเคราะห์และค้นหาใบหน้าเริ่มต้น</label>
-          <select id="inputDefaultEngineMode">
-            <option value="arcface_gemini">✨ ArcFace + Gemini AI (แนะนำ — ยืนยันเคสก้ำกึ่งแม่นยำสูง)</option>
-            <option value="arcface">🎯 ArcFace 512-D (เร็ว ฟรี ไม่ใช้ Gemini)</option>
-          </select>
-        </div>
+          <hr style="border: none; border-top: 1px solid var(--border); margin: 12px 0;" />
+          <div style="font-weight: 600; font-size: 0.88rem; color: var(--pink-700); margin-bottom: 10px;">🏠 จัดการหน้าหลัก (Landing Page)</div>
 
-        <div class="form-group">
-          <label for="thresholdSlider">ความเข้มงวดในการค้นหาใบหน้า: <strong id="thresholdValueLabel">0.40</strong></label>
-          <input type="range" id="thresholdSlider" min="0.28" max="0.55" step="0.01" value="0.40" style="width: 100%; accent-color: var(--pink-500);" />
-        </div>
-
-        <div class="form-group">
-          <label for="inputDriveFolderUrl">ลิงก์ Google Drive Folder กลาง</label>
-          <input type="text" id="inputDriveFolderUrl" placeholder="https://drive.google.com/drive/folders/..." />
-        </div>
-
-        <details style="margin-bottom: 14px; font-size: 0.84rem; color: var(--text);">
-          <summary style="cursor: pointer; font-weight: 600; margin-bottom: 10px; color: var(--pink-700);">🏠 จัดการหน้าหลัก (Landing Page)</summary>
           <div class="form-group">
             <label for="inputBankLogoFile">โลโก้ธนาคาร (จัดวางกลางด้านบน ขนาดพอดี)</label>
             <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
@@ -369,35 +349,67 @@
             <label for="inputLandingDate">วันที่จัดงาน</label>
             <input type="text" id="inputLandingDate" placeholder="เช่น 26 พฤศจิกายน 2569" />
           </div>
-        </details>
+        </div>
 
-        <details style="margin-bottom: 14px; font-size: 0.82rem; color: var(--text-muted);">
-          <summary style="cursor: pointer; font-weight: 500; margin-bottom: 8px;">ตั้งค่าขั้นสูง (เชื่อม Google Drive / รหัสผู้ดูแล / สแกนใบหน้า)</summary>
+        <!-- Tab 2: Admin (Gemini API Key + ตั้งค่าขั้นสูง) -->
+        <div id="cfgPanelAdmin" hidden>
           <div class="form-group">
-            <label for="inputOauthClientId">Google OAuth Client ID (สำหรับส่งรูปเข้า Drive ส่วนตัว)</label>
-            <input type="text" id="inputOauthClientId" placeholder="xxxx.apps.googleusercontent.com" />
+            <label for="inputGeminiApiKey">Gemini API Key (วิเคราะห์ใบหน้าแม่นยำสูง)</label>
+            <div style="display: flex; gap: 6px;">
+              <input type="password" id="inputGeminiApiKey" placeholder="AIzaSy... หรือ AQ..." autocomplete="off" style="flex: 1;" />
+              <button class="btn btn-soft" id="btnTestGeminiKey" type="button" style="white-space: nowrap; padding: 6px 12px; font-size: 0.8rem;">
+                ทดสอบคีย์
+              </button>
+            </div>
+            <div id="geminiTestResult" style="font-size: 0.78rem; margin-top: 5px;" hidden></div>
           </div>
+
           <div class="form-group">
-            <label for="inputOauthClientSecret">Google OAuth Client Secret</label>
-            <input type="password" id="inputOauthClientSecret" placeholder="GOCSPX-..." autocomplete="off" />
+            <label for="inputDefaultEngineMode">ระบบวิเคราะห์และค้นหาใบหน้าเริ่มต้น</label>
+            <select id="inputDefaultEngineMode">
+              <option value="arcface_gemini">✨ ArcFace + Gemini AI (แนะนำ — ยืนยันเคสก้ำกึ่งแม่นยำสูง)</option>
+              <option value="arcface">🎯 ArcFace 512-D (เร็ว ฟรี ไม่ใช้ Gemini)</option>
+            </select>
           </div>
-          <div style="margin-bottom: 12px;">
-            <button class="btn btn-soft" id="btnConnectGoogleOauth" type="button" style="width: 100%;">
-              🔗 ล็อกอินบัญชี Google เจ้าของโฟลเดอร์
+
+          <div class="form-group">
+            <label for="thresholdSlider">ความเข้มงวดในการค้นหาใบหน้า: <strong id="thresholdValueLabel">0.40</strong></label>
+            <input type="range" id="thresholdSlider" min="0.28" max="0.55" step="0.01" value="0.40" style="width: 100%; accent-color: var(--pink-500);" />
+          </div>
+
+          <div class="form-group">
+            <label for="inputDriveFolderUrl">ลิงก์ Google Drive Folder กลาง</label>
+            <input type="text" id="inputDriveFolderUrl" placeholder="https://drive.google.com/drive/folders/..." />
+          </div>
+
+          <details open style="margin-bottom: 14px; font-size: 0.82rem; color: var(--text-muted);">
+            <summary style="cursor: pointer; font-weight: 500; margin-bottom: 8px;">ตั้งค่าขั้นสูง (เชื่อม Google Drive / รหัสผู้ดูแล / สแกนใบหน้า)</summary>
+            <div class="form-group">
+              <label for="inputOauthClientId">Google OAuth Client ID (สำหรับส่งรูปเข้า Drive ส่วนตัว)</label>
+              <input type="text" id="inputOauthClientId" placeholder="xxxx.apps.googleusercontent.com" />
+            </div>
+            <div class="form-group">
+              <label for="inputOauthClientSecret">Google OAuth Client Secret</label>
+              <input type="password" id="inputOauthClientSecret" placeholder="GOCSPX-..." autocomplete="off" />
+            </div>
+            <div style="margin-bottom: 12px;">
+              <button class="btn btn-soft" id="btnConnectGoogleOauth" type="button" style="width: 100%;">
+                🔗 ล็อกอินบัญชี Google เจ้าของโฟลเดอร์
+              </button>
+            </div>
+            <div class="form-group">
+              <label for="inputServiceAccountJson">Google Service Account JSON (สำหรับดึงรูปจาก Drive)</label>
+              <textarea id="inputServiceAccountJson" rows="2" placeholder="เว้นว่างไว้หากตั้งค่าแล้ว"></textarea>
+            </div>
+            <div class="form-group">
+              <label for="inputNewAdminPassword">เปลี่ยนรหัสผ่านผู้ดูแล (Settings)</label>
+              <input type="password" id="inputNewAdminPassword" placeholder="เว้นว่างหากไม่ต้องการเปลี่ยน" autocomplete="new-password" />
+            </div>
+            <button class="btn btn-ghost" id="btnResetAllFaces" type="button" style="width: 100%;">
+              🔄 สแกนใบหน้ารูปเดิมในอัลบั้มใหม่ทั้งหมด
             </button>
-          </div>
-          <div class="form-group">
-            <label for="inputServiceAccountJson">Google Service Account JSON (สำหรับดึงรูปจาก Drive)</label>
-            <textarea id="inputServiceAccountJson" rows="2" placeholder="เว้นว่างไว้หากตั้งค่าแล้ว"></textarea>
-          </div>
-          <div class="form-group">
-            <label for="inputNewAdminPassword">เปลี่ยนรหัสผ่านผู้ดูแล (Settings)</label>
-            <input type="password" id="inputNewAdminPassword" placeholder="เว้นว่างหากไม่ต้องการเปลี่ยน" autocomplete="new-password" />
-          </div>
-          <button class="btn btn-ghost" id="btnResetAllFaces" type="button" style="width: 100%;">
-            🔄 สแกนใบหน้ารูปเดิมในอัลบั้มใหม่ทั้งหมด
-          </button>
-        </details>
+          </details>
+        </div>
 
         <div style="display: flex; justify-content: flex-end; gap: 8px;">
           <button class="btn btn-ghost" data-close-modal="configModal" type="button">ยกเลิก</button>
@@ -470,6 +482,7 @@
       <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-top: 12px;">
         <div id="lightboxMetaText" style="font-size: 0.8rem; color: var(--text-muted);"></div>
         <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+          <button id="btnDeletePhotoAdmin" class="btn btn-danger-soft" type="button" hidden>🗑️ ลบรูป (Admin)</button>
           <button id="btnShareLineLightbox" class="btn btn-soft" type="button">💬 แชร์ผ่าน LINE</button>
           <a id="lightboxDriveLink" class="btn btn-ghost" href="#" target="_blank" rel="noopener" hidden>ดูภาพขนาดเต็ม (Google Drive)</a>
           <a id="lightboxDownloadLink" class="btn btn-primary" href="#" download>ดาวน์โหลด</a>
@@ -499,6 +512,12 @@
       <input type="file" id="fileInputFriendSelfie" accept="image/*" capture="user" hidden />
       <input type="file" id="fileInputFriendPhoto" accept="image/*" hidden />
       <div id="friendSelfieStatus" style="font-size: 0.82rem; color: var(--pink-700); margin-bottom: 8px;" hidden></div>
+      <div id="friendSelfiePreviewWrap" class="friend-selfie-preview-box" hidden>
+        <div id="friendSelfiePreviewList" style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;"></div>
+        <button class="btn btn-ghost" id="btnRetakeFriendSelfie" type="button" style="padding: 5px 12px; font-size: 0.8rem;">
+          🔄 ถ่ายใหม่ / เปลี่ยนภาพ
+        </button>
+      </div>
 
       <div style="font-size: 0.82rem; font-weight: 600; color: var(--text-muted); margin-bottom: 8px;">
         หรือเลือกจากบุคคลในงาน (แตะเพื่อเลือก / ยกเลิก):
@@ -506,8 +525,8 @@
       <div class="friend-picker-grid" id="friendPickerGrid"></div>
 
       <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px;">
-        <button class="btn btn-primary" data-close-modal="addFriendModal" type="button" style="width: 100%;">
-          ✓ เสร็จสิ้น (<span id="friendModalCountSpan">1</span>/3 คน)
+        <button class="btn btn-primary" id="btnFriendModalDone" data-close-modal="addFriendModal" type="button" style="width: 100%;">
+          ✓ เสร็จสิ้น (<span id="friendModalCountSpan">1</span>/3) คน กดเพื่อค้นหาทันที
         </button>
       </div>
     </div>
