@@ -1,0 +1,17 @@
+{
+  "name": "RM6 Pink Album (InsightFace)",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:22",
+  "features": {
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.11"
+    }
+  },
+  "postCreateCommand": "pip install --no-cache-dir numpy onnxruntime opencv-python-headless && python3 scripts/download_models.py",
+  "forwardPorts": [3000],
+  "portsAttributes": {
+    "3000": {
+      "label": "RM6 Pink Album",
+      "onAutoForward": "openBrowser"
+    }
+  }
+}
