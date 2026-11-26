@@ -290,7 +290,8 @@
         <button class="cfg-tab" id="cfgTabBtnAdmin" type="button">🔧 Admin</button>
       </div>
 
-      <form id="configForm">
+      <form id="configForm" style="display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0;">
+        <div class="modal-scroll-body">
         <!-- Tab 1: ตกแต่ง (Landing Page + ชื่องาน + โลโก้) -->
         <div id="cfgPanelDecor">
           <div class="form-group">
@@ -410,8 +411,9 @@
             </button>
           </details>
         </div>
+        </div>
 
-        <div style="display: flex; justify-content: flex-end; gap: 8px;">
+        <div class="modal-sticky-footer" style="display: flex; justify-content: flex-end; gap: 8px;">
           <button class="btn btn-ghost" data-close-modal="configModal" type="button">ยกเลิก</button>
           <button class="btn btn-primary" type="submit">บันทึก</button>
         </div>
@@ -479,7 +481,7 @@
         <span>👆 แตะกรอบสีชมพูที่ใบหน้าเพื่อค้นหารูปทั้งหมดของคนนั้น</span>
         <button id="btnToggleFaceBoxes" class="btn btn-ghost" type="button" style="padding: 4px 10px; font-size: 0.76rem;">👁️ ซ่อนกรอบหน้า</button>
       </div>
-      <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-top: 12px;">
+      <div class="modal-sticky-footer" style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px;">
         <div id="lightboxMetaText" style="font-size: 0.8rem; color: var(--text-muted);"></div>
         <div style="display: flex; gap: 6px; flex-wrap: wrap;">
           <button id="btnDeletePhotoAdmin" class="btn btn-danger-soft" type="button" hidden>🗑️ ลบรูป (Admin)</button>
@@ -498,34 +500,36 @@
         <h3>👥 เพิ่มเพื่อนร่วมเฟรม (สูงสุด 3 คน)</h3>
         <button class="close-btn" data-close-modal="addFriendModal" type="button">✕</button>
       </div>
-      <p style="margin: 0 0 10px; font-size: 0.82rem; color: var(--text-muted);">
-        เลือกวิธีเพิ่มเพื่อนคนที่ 2 หรือ 3 เพื่อกรองเฉพาะภาพที่มีทุกคนอยู่ในรูปเดียวกัน
-      </p>
-      <div class="search-main-btns-row" style="margin-bottom: 12px;">
-        <button class="btn btn-primary btn-search-pair" id="btnFriendSelfie" type="button" style="min-height: 42px; font-size: 0.88rem;">
-          📷 ให้เพื่อนถ่ายเซลฟี
-        </button>
-        <button class="btn btn-soft btn-search-pair" id="btnFriendPickPhoto" type="button" style="min-height: 42px; font-size: 0.88rem;">
-          🖼️ เลือกรูปหน้าเพื่อน
-        </button>
-      </div>
-      <input type="file" id="fileInputFriendSelfie" accept="image/*" capture="user" hidden />
-      <input type="file" id="fileInputFriendPhoto" accept="image/*" hidden />
-      <div id="friendSelfieStatus" style="font-size: 0.82rem; color: var(--pink-700); margin-bottom: 8px;" hidden></div>
-      <div id="friendSelfiePreviewWrap" class="friend-selfie-preview-box" hidden>
-        <div id="friendSelfiePreviewList" style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;"></div>
-        <button class="btn btn-ghost" id="btnRetakeFriendSelfie" type="button" style="padding: 5px 12px; font-size: 0.8rem;">
-          🔄 ถ่ายใหม่ / เปลี่ยนภาพ
-        </button>
-      </div>
+      <div style="flex-shrink: 0;">
+        <p style="margin: 0 0 8px; font-size: 0.82rem; color: var(--text-muted);">
+          เลือกวิธีเพิ่มเพื่อนคนที่ 2 หรือ 3 เพื่อกรองเฉพาะภาพที่มีทุกคนอยู่ในรูปเดียวกัน
+        </p>
+        <div class="search-main-btns-row" style="margin-bottom: 10px;">
+          <button class="btn btn-primary btn-search-pair" id="btnFriendSelfie" type="button" style="min-height: 42px; font-size: 0.86rem;">
+            📷 ให้เพื่อนถ่ายเซลฟี
+          </button>
+          <button class="btn btn-soft btn-search-pair" id="btnFriendPickPhoto" type="button" style="min-height: 42px; font-size: 0.86rem;">
+            🖼️ เลือกรูปหน้าเพื่อน
+          </button>
+        </div>
+        <input type="file" id="fileInputFriendSelfie" accept="image/*" capture="user" hidden />
+        <input type="file" id="fileInputFriendPhoto" accept="image/*" hidden />
+        <div id="friendSelfieStatus" style="font-size: 0.82rem; color: var(--pink-700); margin-bottom: 8px;" hidden></div>
+        <div id="friendSelfiePreviewWrap" class="friend-selfie-preview-box" hidden>
+          <div id="friendSelfiePreviewList" style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;"></div>
+          <button class="btn btn-ghost" id="btnRetakeFriendSelfie" type="button" style="padding: 5px 12px; font-size: 0.8rem;">
+            🔄 ถ่ายใหม่ / เปลี่ยนภาพ
+          </button>
+        </div>
 
-      <div style="font-size: 0.82rem; font-weight: 600; color: var(--text-muted); margin-bottom: 8px;">
-        หรือเลือกจากบุคคลในงาน (แตะเพื่อเลือก / ยกเลิก):
+        <div style="font-size: 0.82rem; font-weight: 600; color: var(--text-muted); margin-bottom: 6px;">
+          หรือเลือกจากบุคคลในงาน (แตะเพื่อเลือก / ยกเลิก):
+        </div>
       </div>
       <div class="friend-picker-grid" id="friendPickerGrid"></div>
 
-      <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px;">
-        <button class="btn btn-primary" id="btnFriendModalDone" data-close-modal="addFriendModal" type="button" style="width: 100%;">
+      <div class="modal-sticky-footer">
+        <button class="btn btn-primary" id="btnFriendModalDone" data-close-modal="addFriendModal" type="button" style="width: 100%; min-height: 44px;">
           ✓ เสร็จสิ้น (<span id="friendModalCountSpan">1</span>/3) คน กดเพื่อค้นหาทันที
         </button>
       </div>
