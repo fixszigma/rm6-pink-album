@@ -21,6 +21,9 @@ const state = {
   landingDate: '',
   landingBgGradient: 'gsb_pink',
   showFaceBoxes: true,
+  friendSelectMode: false,
+  friendFilterActive: false,
+  selectedFriendClusterIds: [],
   driveFolderId: '',
   driveFolderUrl: '',
   driveAuthMode: 'local_only',
@@ -168,7 +171,10 @@ function renderBrandLogoUI() {
 
 function renderEngineModeUI() {
   const badge = $('geminiBadge');
-  if (badge) badge.hidden = !state.hasGeminiKey;
+  if (badge) {
+    badge.className = `status-dot ${state.hasGeminiKey ? 'dot-green' : 'dot-yellow'}`;
+    badge.title = state.hasGeminiKey ? 'Gemini AI: พร้อมใช้งาน' : 'Gemini AI: ยังไม่ได้ตั้งค่าคีย์';
+  }
 }
 
 async function fetchStatusAndPhotos() {
@@ -203,7 +209,11 @@ async function fetchStatusAndPhotos() {
     renderLandingUI();
     renderEngineModeUI();
 
-    $('aiEngineStatus').textContent = statusResp.arcFaceReady ? 'ArcFace พร้อมใช้งาน' : 'ไม่พบโมเดล ArcFace';
+    const aiDot = $('aiEngineStatus');
+    if (aiDot) {
+      aiDot.className = `status-dot ${statusResp.arcFaceReady ? 'dot-green' : 'dot-yellow'}`;
+      aiDot.title = statusResp.arcFaceReady ? 'ระบบตรวจจับใบหน้า: พร้อมใช้งาน' : 'ระบบตรวจจับใบหน้า: ยังไม่พร้อมใช้งาน';
+    }
 
     if (statusResp.faceMatchThreshold && !state.lastQuery) {
       $('thresholdSlider').value = String(statusResp.faceMatchThreshold);
@@ -252,8 +262,9 @@ function renderClusters() {
 
   for (const cluster of display) {
     const isActive = state.activeClusterId === cluster.id;
+    const isFriendPicked = state.selectedFriendClusterIds.includes(cluster.id);
     const item = document.createElement('div');
-    item.className = `cluster-item${isActive ? ' active' : ''}`;
+    item.className = `cluster-item${isActive ? ' active' : ''}${isFriendPicked ? ' friend-picked' : ''}`;
     item.innerHTML = `
       <div class="cluster-avatar-wrap">
         <img class="cluster-avatar" src="${cluster.avatarDataUrl || ''}" alt="${cluster.label}" />
@@ -262,13 +273,31 @@ function renderClusters() {
       <div class="cluster-label" title="คลิกเพื่อกรอง / ดับเบิลคลิกเพื่อเปลี่ยนชื่อ">${cluster.label}</div>
     `;
 
-    // Click a person => run a real ArcFace search with that person's face (finds back-row/side-angle shots too)
+    // Click a person => either toggle in friend group (up to 3) or filter single cluster
     item.addEventListener('click', () => {
+      if (state.friendSelectMode) {
+        const idx = state.selectedFriendClusterIds.indexOf(cluster.id);
+        if (idx >= 0) {
+          state.selectedFriendClusterIds.splice(idx, 1);
+        } else {
+          if (state.selectedFriendClusterIds.length >= 3) {
+            window.alert('เลือกเพื่อนได้สูงสุดไม่เกิน 3 คนครับ');
+            return;
+          }
+          state.selectedFriendClusterIds.push(cluster.id);
+        }
+        renderFriendGroupBar();
+        renderClusters();
+        return;
+      }
       if (state.activeClusterId === cluster.id) { clearAllFilters(); return; }
       state.searchMatches = null;
       state.lastQuery = null;
+      state.friendFilterActive = false;
+      state.selectedFriendClusterIds = [];
       state.activeClusterId = cluster.id;
       saveGuestAvatar({ type: 'cluster', clusterId: cluster.id, avatarUrl: cluster.avatarDataUrl || '' });
+      renderFriendGroupBar();
       syncFilterBannerUI();
       renderClusters();
       renderPhotoGrid();
@@ -310,12 +339,56 @@ function renderClusters() {
   }
 }
 
-function getVisiblePhotos() {
-  if (Array.isArray(state.searchMatches)) return state.searchMatches;
-  if (state.activeClusterId) {
-    return state.photos.filter((p) => Array.isArray(p.clusterIds) && p.clusterIds.includes(state.activeClusterId));
+function renderFriendGroupBar() {
+  const bar = $('friendGroupBar');
+  const chips = $('friendChipsWrap');
+  const applyBtn = $('btnApplyFriendFilter');
+  const toggleBtn = $('btnToggleFriendSelect');
+  if (!bar || !chips) return;
+
+  const show = state.friendSelectMode || state.selectedFriendClusterIds.length > 0;
+  bar.hidden = !show;
+  if (toggleBtn) {
+    toggleBtn.classList.toggle('btn-primary', state.friendSelectMode);
+    toggleBtn.classList.toggle('btn-soft', !state.friendSelectMode);
   }
-  return state.photos;
+
+  chips.innerHTML = '';
+  if (!state.selectedFriendClusterIds.length) {
+    chips.innerHTML = '<span style="font-size:0.78rem;color:var(--text-muted);">แตะที่รูปบุคคลในงานด้านล่าง 1–3 คน</span>';
+  } else {
+    state.selectedFriendClusterIds.forEach((cid) => {
+      const c = state.clusters.find((x) => x.id === cid);
+      if (!c) return;
+      const chip = document.createElement('span');
+      chip.className = 'friend-chip';
+      chip.innerHTML = `<img src="${c.avatarDataUrl || ''}" alt="${c.label}" /><span>${c.label}</span><button type="button" aria-label="ลบ">✕</button>`;
+      chip.querySelector('button').addEventListener('click', () => {
+        state.selectedFriendClusterIds = state.selectedFriendClusterIds.filter((x) => x !== cid);
+        if (!state.selectedFriendClusterIds.length) state.friendFilterActive = false;
+        renderFriendGroupBar();
+        renderClusters();
+        syncFilterBannerUI();
+        renderPhotoGrid();
+      });
+      chips.appendChild(chip);
+    });
+  }
+  if (applyBtn) {
+    applyBtn.disabled = state.selectedFriendClusterIds.length === 0;
+  }
+}
+
+function getVisiblePhotos() {
+  let list = Array.isArray(state.searchMatches) ? state.searchMatches : state.photos;
+  if (state.friendFilterActive && state.selectedFriendClusterIds.length > 0) {
+    list = list.filter((p) =>
+      state.selectedFriendClusterIds.every((cid) => Array.isArray(p.clusterIds) && p.clusterIds.includes(cid))
+    );
+  } else if (!Array.isArray(state.searchMatches) && state.activeClusterId) {
+    list = list.filter((p) => Array.isArray(p.clusterIds) && p.clusterIds.includes(state.activeClusterId));
+  }
+  return list;
 }
 
 function clearAllFilters() {
@@ -323,17 +396,26 @@ function clearAllFilters() {
   state.searchMatches = null;
   state.lastQuery = null;
   state.lastSearchMeta = null;
+  state.friendFilterActive = false;
+  state.selectedFriendClusterIds = [];
+  state.friendSelectMode = false;
   $('fileInputQueryFace').value = '';
   $('fileInputSelfieCapture').value = '';
+  renderFriendGroupBar();
   syncFilterBannerUI();
   renderClusters();
   renderPhotoGrid();
 }
 
+function renderAiGraphicTag(label) {
+  return `<span class="ai-visual-graphic"><span class="ai-graphic-dot"></span><span class="ai-bars"><span></span><span></span><span></span><span></span></span><span style="font-size:0.78rem;font-weight:600;color:var(--pink-700);">${label}</span></span>`;
+}
+
 function syncFilterBannerUI() {
   const hasSearch = Array.isArray(state.searchMatches);
   const hasCluster = Boolean(state.activeClusterId);
-  const filtered = hasSearch || hasCluster;
+  const hasFriends = state.friendFilterActive && state.selectedFriendClusterIds.length > 0;
+  const filtered = hasSearch || hasCluster || hasFriends;
 
   $('btnClearFaceFilter').hidden = !filtered;
   $('activeSearchBar').hidden = !filtered;
@@ -351,31 +433,36 @@ function syncFilterBannerUI() {
     return;
   }
 
+  const visibleCount = getVisiblePhotos().length;
   if (hasSearch) {
     const avatar = state.lastSearchMeta && state.lastSearchMeta.queryFaceAvatarUrl
       ? state.lastSearchMeta.queryFaceAvatarUrl
       : (state.lastQuery && state.lastQuery.avatarUrl) || '';
     if (avatar) { thumb.src = avatar; thumb.hidden = false; } else { thumb.hidden = true; }
 
-    title.textContent = `พบ ${state.searchMatches.length} รูปที่ตรงกัน`;
-    const meta = state.lastSearchMeta || {};
-    const secText = meta.durationMs !== undefined ? ` • ${(meta.durationMs / 1000).toFixed(1)} วิ` : '';
-
-    if (meta.geminiUsed) {
-      tagWrap.innerHTML = `<span class="engine-result-tag tag-gemini">✨ ArcFace + Gemini (${meta.geminiModel || 'AI'}${secText})</span>`;
-    } else {
-      tagWrap.innerHTML = `<span class="engine-result-tag tag-hog">🎯 ArcFace 512-D${secText}</span>`;
-    }
+    title.textContent = `พบ ${visibleCount} รูปที่ตรงกัน`;
+    tagWrap.innerHTML = renderAiGraphicTag(hasFriends ? `✨ พบภาพที่มีเพื่อนร่วมเฟรม (${state.selectedFriendClusterIds.length} คน)` : '✨ ค้นหาภาพด้วย AI สำเร็จ');
 
     const notes = [];
+    const meta = state.lastSearchMeta || {};
     if (meta.expandedCount > 0) notes.push(`ค้นต่อยอดเพิ่ม ${meta.expandedCount} รูป`);
     if (meta.geminiError) notes.push(meta.geminiError);
     sub.textContent = notes.join(' • ');
+  } else if (hasFriends) {
+    const firstC = state.clusters.find((x) => x.id === state.selectedFriendClusterIds[0]);
+    if (firstC && firstC.avatarDataUrl) { thumb.src = firstC.avatarDataUrl; thumb.hidden = false; } else { thumb.hidden = true; }
+    const names = state.selectedFriendClusterIds
+      .map((cid) => (state.clusters.find((x) => x.id === cid) || {}).label)
+      .filter(Boolean)
+      .join(' + ');
+    title.textContent = `ภาพที่อยู่ด้วยกัน (${visibleCount} รูป)`;
+    tagWrap.innerHTML = renderAiGraphicTag(`👥 ${names}`);
+    sub.textContent = '';
   } else {
     const c = state.clusters.find((x) => x.id === state.activeClusterId);
     if (c && c.avatarDataUrl) { thumb.src = c.avatarDataUrl; thumb.hidden = false; } else { thumb.hidden = true; }
-    title.textContent = `${c ? c.label : 'บุคคลที่เลือก'} (${getVisiblePhotos().length} รูป)`;
-    tagWrap.innerHTML = `<span class="engine-result-tag tag-hog">🎯 จัดกลุ่มด้วย ArcFace 512-D</span>`;
+    title.textContent = `${c ? c.label : 'บุคคลที่เลือก'} (${visibleCount} รูป)`;
+    tagWrap.innerHTML = renderAiGraphicTag('👤 คัดแยกบุคคลอัตโนมัติ');
     sub.textContent = '';
   }
 }
@@ -509,9 +596,7 @@ async function executeSearch(query) {
   if (query.avatarUrl) { $('queryFacePreviewImg').src = query.avatarUrl; $('queryFacePreviewImg').hidden = false; }
 
   $('activeFilterTitle').textContent = 'กำลังค้นหา...';
-  $('activeEngineTagWrap').innerHTML = mode === 'arcface_gemini'
-    ? `<span class="engine-result-tag tag-gemini">🔄 ArcFace + Gemini กำลังทำงาน...</span>`
-    : `<span class="engine-result-tag tag-hog">🔄 ArcFace 512-D กำลังทำงาน...</span>`;
+  $('activeEngineTagWrap').innerHTML = renderAiGraphicTag('🔄 กำลังวิเคราะห์ใบหน้า...');
   $('activeFilterSub').textContent = '';
 
   const ctrl = new AbortController();
@@ -629,9 +714,27 @@ function closeSelfieCamera() {
 // Lightbox with Tap-a-Face
 // ============================================================================
 
+function stepLightbox(delta) {
+  const visible = getVisiblePhotos();
+  if (!visible.length || !state.currentLightboxPhoto) return;
+  const idx = visible.findIndex((p) => p.id === state.currentLightboxPhoto.id);
+  const nextIdx = idx + delta;
+  if (nextIdx >= 0 && nextIdx < visible.length) {
+    openLightbox(visible[nextIdx]);
+  }
+}
+
 function openLightbox(photo) {
   state.currentLightboxPhoto = photo;
-  $('lightboxTitle').textContent = photo.name;
+  const visible = getVisiblePhotos();
+  const idx = visible.findIndex((p) => p.id === photo.id);
+  const posLabel = idx >= 0 ? ` (${idx + 1}/${visible.length})` : '';
+  $('lightboxTitle').textContent = `${photo.name}${posLabel}`;
+
+  const prevBtn = $('btnLightboxPrev');
+  const nextBtn = $('btnLightboxNext');
+  if (prevBtn) prevBtn.disabled = idx <= 0;
+  if (nextBtn) nextBtn.disabled = idx < 0 || idx >= visible.length - 1;
   const img = $('lightboxImg');
   const layer = $('lightboxFaceLayer');
   layer.innerHTML = '';
@@ -1216,7 +1319,56 @@ window.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
-  // LINE Share & Lightbox face box toggle
+  // LINE Share & Lightbox face box toggle + Left/Right navigation + Friend group selector
+  if ($('btnToggleFriendSelect')) {
+    $('btnToggleFriendSelect').addEventListener('click', () => {
+      state.friendSelectMode = !state.friendSelectMode;
+      renderFriendGroupBar();
+      renderClusters();
+    });
+  }
+  if ($('btnApplyFriendFilter')) {
+    $('btnApplyFriendFilter').addEventListener('click', () => {
+      if (!state.selectedFriendClusterIds.length) return;
+      state.friendFilterActive = true;
+      state.activeClusterId = null;
+      state.friendSelectMode = false;
+      renderFriendGroupBar();
+      syncFilterBannerUI();
+      renderClusters();
+      renderPhotoGrid();
+    });
+  }
+  if ($('btnClearFriendFilter')) {
+    $('btnClearFriendFilter').addEventListener('click', () => {
+      state.friendFilterActive = false;
+      state.selectedFriendClusterIds = [];
+      state.friendSelectMode = false;
+      renderFriendGroupBar();
+      syncFilterBannerUI();
+      renderClusters();
+      renderPhotoGrid();
+    });
+  }
+  if ($('btnLightboxPrev')) $('btnLightboxPrev').addEventListener('click', () => stepLightbox(-1));
+  if ($('btnLightboxNext')) $('btnLightboxNext').addEventListener('click', () => stepLightbox(1));
+  document.addEventListener('keydown', (e) => {
+    if ($('lightboxModal') && !$('lightboxModal').hidden) {
+      if (e.key === 'ArrowLeft') stepLightbox(-1);
+      else if (e.key === 'ArrowRight') stepLightbox(1);
+    }
+  });
+  if ($('lightboxStage')) {
+    let touchStartX = 0;
+    $('lightboxStage').addEventListener('touchstart', (e) => {
+      if (e.touches && e.touches[0]) touchStartX = e.touches[0].clientX;
+    }, { passive: true });
+    $('lightboxStage').addEventListener('touchend', (e) => {
+      if (!e.changedTouches || !e.changedTouches[0]) return;
+      const dx = e.changedTouches[0].clientX - touchStartX;
+      if (Math.abs(dx) > 45) stepLightbox(dx < 0 ? 1 : -1);
+    }, { passive: true });
+  }
   if ($('btnToggleFaceBoxes')) {
     $('btnToggleFaceBoxes').addEventListener('click', () => {
       state.showFaceBoxes = !state.showFaceBoxes;

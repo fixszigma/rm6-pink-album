@@ -92,24 +92,28 @@
     <div id="viewSearch" hidden style="display: flex; flex-direction: column; gap: 12px;">
       <!-- Minimal Face Search Card -->
       <section class="surface-card search-bar-card">
-        <div class="search-top-row">
-          <div class="search-main-btns">
-            <button class="btn btn-primary btn-selfie-hero" id="btnOpenSelfieCamera" type="button">
-              🤳 ถ่ายเซลฟีค้นหารูป
-            </button>
-            <button class="btn btn-soft" id="btnPickQueryFace" type="button">
-              🖼️ เลือกรูปใบหน้า
-            </button>
-            <button class="btn btn-danger-soft" id="btnClearFaceFilter" type="button" hidden>
-              ✕ ล้างการค้นหา
-            </button>
+        <div class="search-header-row">
+          <div class="search-hero-head">
+            <div class="search-hero-title">เลือกวิธีค้นหาภาพด้วยใบหน้า</div>
+            <div class="search-hero-sub">เพื่อค้นหาภาพของคุณ</div>
           </div>
-
-          <div class="status-badges">
-            <span class="dot-badge" id="aiEngineStatus">กำลังโหลด AI...</span>
-            <span class="dot-badge gemini-on" id="geminiBadge" hidden>✨ Gemini พร้อมใช้</span>
+          <div class="status-dots" aria-label="สถานะระบบ AI">
+            <span class="status-dot dot-yellow" id="aiEngineStatus" title="กำลังตรวจสอบระบบตรวจจับใบหน้า"></span>
+            <span class="status-dot dot-yellow" id="geminiBadge" title="Gemini AI: ไม่ได้เปิดใช้งาน"></span>
           </div>
         </div>
+
+        <div class="search-main-btns-row">
+          <button class="btn btn-primary btn-search-pair" id="btnOpenSelfieCamera" type="button">
+            📷 ถ่ายภาพใบหน้า
+          </button>
+          <button class="btn btn-soft btn-search-pair" id="btnPickQueryFace" type="button">
+            🙂 ใช้ภาพที่มีอยู่
+          </button>
+        </div>
+        <button class="btn btn-danger-soft" id="btnClearFaceFilter" type="button" hidden style="width: 100%;">
+          ✕ ล้างการค้นหา
+        </button>
 
         <!-- Hidden Inputs for Native Mobile Selfie Capture & Gallery Face Pick -->
         <input type="file" id="fileInputSelfieCapture" accept="image/*" capture="user" hidden />
@@ -154,9 +158,28 @@
       <section class="surface-card" id="clusterSection">
         <div class="section-head">
           <h2 class="section-title">บุคคลในงาน (<span id="statTotalClusters">0</span>)</h2>
-          <button class="btn btn-ghost" id="btnReindexUnindexed" type="button" style="font-size: 0.76rem; padding: 4px 10px;" hidden>
-            ⚡ สแกนค้าง (<span id="unindexedCountSpan">0</span>)
-          </button>
+          <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+            <button class="btn btn-soft" id="btnToggleFriendSelect" type="button" style="font-size: 0.78rem; padding: 5px 12px;">
+              👥 ค้นหาพร้อมเพื่อน (2–3 คน)
+            </button>
+            <button class="btn btn-ghost" id="btnReindexUnindexed" type="button" style="font-size: 0.76rem; padding: 4px 10px;" hidden>
+              ⚡ สแกนค้าง (<span id="unindexedCountSpan">0</span>)
+            </button>
+          </div>
+        </div>
+        <div class="friend-group-bar" id="friendGroupBar" hidden>
+          <div class="friend-group-info">
+            <div class="friend-group-title">👥 เลือกเพื่อนที่ต้องการให้มีในรูปเดียวกัน (สูงสุด 3 คน)</div>
+            <div class="friend-chips" id="friendChipsWrap"></div>
+          </div>
+          <div style="display: flex; gap: 6px;">
+            <button class="btn btn-primary" id="btnApplyFriendFilter" type="button" disabled style="padding: 6px 14px; font-size: 0.82rem;">
+              🔍 ค้นหารูปคู่/กลุ่ม
+            </button>
+            <button class="btn btn-ghost" id="btnClearFriendFilter" type="button" style="padding: 6px 10px; font-size: 0.8rem;">
+              ✕ ล้าง
+            </button>
+          </div>
         </div>
         <div class="cluster-strip" id="clusterStrip"></div>
       </section>
@@ -441,11 +464,13 @@
         <h3 id="lightboxTitle" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">รูปภาพ</h3>
         <button class="close-btn" data-close-modal="lightboxModal" type="button">✕</button>
       </div>
-      <div class="lightbox-stage">
+      <div class="lightbox-stage" id="lightboxStage">
+        <button class="lightbox-nav-btn lightbox-nav-prev" id="btnLightboxPrev" type="button" aria-label="รูปก่อนหน้า">‹</button>
         <div class="lightbox-img-wrap" id="lightboxImgWrap">
           <img id="lightboxImg" src="" alt="Preview" />
           <div id="lightboxFaceLayer"></div>
         </div>
+        <button class="lightbox-nav-btn lightbox-nav-next" id="btnLightboxNext" type="button" aria-label="รูปถัดไป">›</button>
       </div>
       <div id="lightboxFaceHint" style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; font-size: 0.78rem; color: var(--pink-600); margin-top: 8px;" hidden>
         <span>👆 แตะกรอบสีชมพูที่ใบหน้าเพื่อค้นหารูปทั้งหมดของคนนั้น</span>
