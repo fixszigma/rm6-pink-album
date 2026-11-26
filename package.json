@@ -1,6 +1,6 @@
 {
   "name": "rm6-pink-album",
-  "version": "1.0.0",
+  "version": "1.026112026",
   "description": "RM6 Pink Album — Event photo sharing with Card Reader & Mobile Web App upload to a shared Google Drive folder and Open-Source AI Face Detection, Clustering & Search",
   "main": "server.js",
   "scripts": {

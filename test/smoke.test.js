@@ -37,21 +37,36 @@ async function apiTests() {
     assert.ok(html.includes('Noto+Sans+Thai'));
     assert.ok(html.includes('capture="user"'));
     assert.ok(html.includes('ผู้พัฒนา นายพรชาย วงศ์กระจ่าง ธนาคารออมสินภาค 6'));
-    assert.ok(html.includes('btnModeArcface') && html.includes('btnModeGemini'));
-    assert.ok(!html.includes('btnModeHogSvm'), 'old HOG mode button removed');
+    assert.ok(html.includes('1.026112026'), 'version 1.026112026 shown');
+    assert.ok(html.includes('btnToggleViewMode'), 'Mobile/Desktop toggle exists');
+    assert.ok(html.includes('adminLoginModal'), 'Settings login modal exists');
+    assert.ok(html.includes('btnShareLineLightbox') && html.includes('btnShareLineSelected'), 'LINE share buttons exist');
+    assert.ok(html.includes('inputEventLogoFile'), 'Event logo upload exists');
     assert.ok(html.includes('lightboxFaceLayer'), 'Tap-a-Face layer exists');
-    console.log('  ✅ 1. UI: 2 engine modes, Tap-a-Face layer, mobile capture, credit footer');
+    console.log('  ✅ 1. UI: version 1.026112026, Mobile/Desktop toggle, Admin Login, LINE Share, Event Logo');
 
-    // 2. Config
-    const cfg = await post('/api/config', {
+    // 2. Settings Auth & Config
+    const unauthCfg = await post('/api/config', { albumTitle: 'Hack' });
+    assert.equal(unauthCfg.ok, false);
+    const login = await post('/api/auth/login', { password: 'rm6admin' });
+    assert.equal(login.ok, true);
+    assert.ok(login.token);
+    const postAuth = (url, body) => fetch(base + url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-admin-token': login.token },
+      body: JSON.stringify(body)
+    }).then((r) => r.json());
+    const cfg = await postAuth('/api/config', {
       driveFolderUrl: 'https://drive.google.com/drive/folders/1PinkAlbumSharedFolderId123456?usp=sharing',
       searchEngineMode: 'arcface_gemini',
-      geminiApiKey: 'dummy'
+      geminiApiKey: 'dummy',
+      eventLogoDataUrl: SAMPLE_JPEG_BASE64
     });
     assert.equal(cfg.driveFolderId, '1PinkAlbumSharedFolderId123456');
     assert.equal(cfg.searchEngineMode, 'arcface_gemini');
-    await post('/api/config', { searchEngineMode: 'arcface' });
-    console.log('  ✅ 2. Config: Drive folder ID parsed, engine mode saved');
+    assert.equal(cfg.eventLogoDataUrl, SAMPLE_JPEG_BASE64);
+    await postAuth('/api/config', { searchEngineMode: 'arcface' });
+    console.log('  ✅ 2. Config: Auth required, Drive folder ID, engine mode & logo saved');
 
     // 3. Upload with pre-computed 512-D faces -> 2 people, group photo separated
     const A1 = unitVec(10, 0.05), A2 = unitVec(10, 0.12), B = unitVec(200);
@@ -86,14 +101,16 @@ async function apiTests() {
     assert.equal(strangers.matchCount, 0, 'unknown face must not match anyone');
     console.log('  ✅ 5. Tap-a-Face works; stranger returns 0 matches');
 
-    // 6. ZIP
+    // 6. ZIP & Delete blocked
     const zipResp = await fetch(`${base}/api/photos/download-zip`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ids: s.results.map((r) => r.id) })
     });
     const zipBuf = Buffer.from(await zipResp.arrayBuffer());
     assert.equal(zipBuf.readUInt32LE(0), 0x04034b50);
-    console.log('  ✅ 6. ZIP download valid');
+    const delResp = await fetch(`${base}/api/photos/${s.results[0].id}`, { method: 'DELETE' });
+    assert.equal(delResp.status, 403, 'photo deletion must be blocked');
+    console.log('  ✅ 6. ZIP download valid & photo deletion blocked (403)');
   } finally {
     await new Promise((r) => server.close(r));
     fs.rmSync(tmpRoot, { recursive: true, force: true });

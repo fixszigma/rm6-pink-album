@@ -130,6 +130,8 @@ function createAppServer(options = {}) {
 
   let config = {
     albumTitle: process.env.ALBUM_TITLE || 'RM6 Pink Album',
+    eventLogoDataUrl: '',
+    adminPassword: process.env.ADMIN_PASSWORD || 'rm6admin',
     driveFolderUrl: defaultFolderUrl || buildDriveFolderWebUrl(defaultFolderId),
     driveFolderId: defaultFolderId,
     googleApiKey: process.env.GOOGLE_API_KEY || '',
@@ -140,11 +142,17 @@ function createAppServer(options = {}) {
     serviceAccountFile: process.env.GOOGLE_SERVICE_ACCOUNT_FILE || '',
     serviceAccountJson: null,
     geminiApiKey: process.env.GEMINI_API_KEY || '',
-    enableGeminiAi: process.env.ENABLE_GEMINI_AI === 'true',
-    searchEngineMode: normalizeEngineMode(process.env.SEARCH_ENGINE_MODE || 'arcface'),
+    enableGeminiAi: process.env.ENABLE_GEMINI_AI !== 'false',
+    searchEngineMode: normalizeEngineMode(process.env.SEARCH_ENGINE_MODE || 'arcface_gemini'),
     geminiModel: normalizeModelName(process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL),
     faceMatchThreshold: sanitizeCosineThreshold(process.env.FACE_MATCH_THRESHOLD, DEFAULT_SEARCH_COSINE),
     clusterThreshold: DEFAULT_CLUSTER_COSINE
+  };
+
+  const adminTokens = new Set();
+  const isAdminAuthorized = (req) => {
+    const token = String(req.headers['x-admin-token'] || '').trim();
+    return Boolean(token && adminTokens.has(token));
   };
 
   if (fs.existsSync(configPath)) {
@@ -385,7 +393,9 @@ function createAppServer(options = {}) {
         const folderId = config.driveFolderId || parseDriveFolderId(config.driveFolderUrl);
         return sendJson(res, 200, {
           ok: true,
+          appVersion: '1.026112026',
           albumTitle: config.albumTitle,
+          eventLogoDataUrl: config.eventLogoDataUrl || '',
           driveFolderId: folderId,
           driveFolderUrl: folderId ? buildDriveFolderWebUrl(folderId) : (config.driveFolderUrl || ''),
           driveAuthMode: getDriveAuthMode(config),
@@ -400,7 +410,7 @@ function createAppServer(options = {}) {
           arcFaceReady: arcFaceService.hasModelsOnDisk(),
           hasGeminiKey: Boolean(config.geminiApiKey && String(config.geminiApiKey).trim()),
           enableGeminiAi: Boolean(config.enableGeminiAi),
-          searchEngineMode: config.searchEngineMode || 'arcface',
+          searchEngineMode: config.searchEngineMode || 'arcface_gemini',
           geminiModel: config.geminiModel || DEFAULT_GEMINI_MODEL,
           faceMatchThreshold: config.faceMatchThreshold,
           lanUrl: getLanOrigin(activePort),
@@ -408,11 +418,36 @@ function createAppServer(options = {}) {
         });
       }
 
-      // 2. POST /api/config
+      // 1b. Admin Auth for Settings
+      if (method === 'POST' && pathname === '/api/auth/login') {
+        const body = await readJsonBody(req);
+        const pwd = String(body.password || '');
+        if (!pwd || pwd !== String(config.adminPassword || 'rm6admin')) {
+          return sendJson(res, 401, { ok: false, error: 'รหัสผ่านผู้ดูแลไม่ถูกต้อง' });
+        }
+        const token = crypto.randomBytes(24).toString('hex');
+        adminTokens.add(token);
+        return sendJson(res, 200, { ok: true, token });
+      }
+
+      if (method === 'GET' && pathname === '/api/auth/verify') {
+        return sendJson(res, 200, { ok: true, authenticated: isAdminAuthorized(req) });
+      }
+
+      // 2. POST /api/config (Protected by Admin Login)
       if (method === 'POST' && pathname === '/api/config') {
+        if (!isAdminAuthorized(req)) {
+          return sendJson(res, 401, { ok: false, error: 'กรุณาเข้าสู่ระบบผู้ดูแลก่อนแก้ไขตั้งค่า' });
+        }
         const body = await readJsonBody(req);
         if (typeof body.albumTitle === 'string' && body.albumTitle.trim()) {
           config.albumTitle = body.albumTitle.trim();
+        }
+        if (typeof body.eventLogoDataUrl === 'string') {
+          config.eventLogoDataUrl = body.eventLogoDataUrl.trim();
+        }
+        if (typeof body.newAdminPassword === 'string' && body.newAdminPassword.trim()) {
+          config.adminPassword = body.newAdminPassword.trim();
         }
         if (typeof body.driveFolderUrl === 'string') {
           const parsedId = parseDriveFolderId(body.driveFolderUrl);
@@ -474,7 +509,9 @@ function createAppServer(options = {}) {
         saveConfig();
         return sendJson(res, 200, {
           ok: true,
+          appVersion: '1.026112026',
           albumTitle: config.albumTitle,
+          eventLogoDataUrl: config.eventLogoDataUrl || '',
           driveFolderId: config.driveFolderId,
           driveFolderUrl: config.driveFolderUrl,
           driveAuthMode: getDriveAuthMode(config),
@@ -1150,28 +1187,10 @@ function createAppServer(options = {}) {
         return res.end(zipBuf);
       }
 
-      // 10. DELETE /api/photos/:id
+      // 10. DELETE /api/photos/:id (Disabled: photo deletion is not allowed)
       const deleteMatch = pathname.match(/^\/api\/photos\/([a-zA-Z0-9_-]+)$/);
       if (method === 'DELETE' && deleteMatch) {
-        const photoId = deleteMatch[1];
-        const idx = db.photos.findIndex((p) => p.id === photoId);
-        if (idx === -1) {
-          return sendJson(res, 404, { ok: false, error: 'ไม่พบรูปภาพนี้' });
-        }
-        const [removed] = db.photos.splice(idx, 1);
-        if (removed.origFileName) {
-          await fsp.unlink(path.join(originalsDir, removed.origFileName)).catch(() => {});
-        }
-        if (removed.thumbFileName) {
-          await fsp.unlink(path.join(thumbsDir, removed.thumbFileName)).catch(() => {});
-        }
-        db.clusters = recomputeClusters(db.photos, db.clusters, config.clusterThreshold || DEFAULT_CLUSTER_COSINE);
-        saveDb();
-        return sendJson(res, 200, {
-          ok: true,
-          clusters: db.clusters.map(buildPublicClusterView),
-          stats: getStats()
-        });
+        return sendJson(res, 403, { ok: false, error: 'ไม่อนุญาตให้ลบรูปภาพออกจากระบบ' });
       }
 
       // 11. Static files in public/

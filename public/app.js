@@ -10,13 +10,15 @@
 const state = {
   activeTab: 'search',
   albumTitle: 'RM6 Pink Album',
+  eventLogoDataUrl: '',
+  pendingLogoDataUrl: undefined,
   driveFolderId: '',
   driveFolderUrl: '',
   driveAuthMode: 'local_only',
   oauthClientId: '',
   hasOauthOwner: false,
   hasGeminiKey: false,
-  searchEngineMode: 'arcface', // 'arcface' | 'arcface_gemini'
+  searchEngineMode: 'arcface_gemini', // 'arcface' | 'arcface_gemini'
   lanUrl: window.location.origin,
   photos: [],
   clusters: [],
@@ -26,7 +28,8 @@ const state = {
   searchMatches: null,
   lastQuery: null, // { type: 'image'|'face', queryImageBase64?, sourcePhotoId?, sourceFaceIndex?, avatarUrl }
   lastSearchMeta: null,
-  selfieStream: null
+  selfieStream: null,
+  currentLightboxPhoto: null
 };
 
 const $ = (id) => document.getElementById(id);
@@ -97,12 +100,24 @@ function formatDriveStatusText(mode, folderId, stats) {
   return 'ผูกโฟลเดอร์ Google Drive แล้ว';
 }
 
+function renderBrandLogoUI() {
+  const img = $('brandLogoImg');
+  const emoji = $('brandLogoEmoji');
+  if (!img || !emoji) return;
+  if (state.eventLogoDataUrl) {
+    img.src = state.eventLogoDataUrl;
+    img.hidden = false;
+    emoji.hidden = true;
+  } else {
+    img.hidden = true;
+    img.removeAttribute('src');
+    emoji.hidden = false;
+  }
+}
+
 function renderEngineModeUI() {
-  let mode = state.searchEngineMode || 'arcface';
-  if (mode === 'arcface_gemini' && !state.hasGeminiKey) mode = 'arcface';
-  $('btnModeArcface').classList.toggle('active-hog', mode === 'arcface');
-  $('btnModeGemini').classList.toggle('active-gemini', mode === 'arcface_gemini');
-  $('geminiBadge').hidden = !state.hasGeminiKey;
+  const badge = $('geminiBadge');
+  if (badge) badge.hidden = !state.hasGeminiKey;
 }
 
 async function fetchStatusAndPhotos() {
@@ -113,18 +128,20 @@ async function fetchStatusAndPhotos() {
 
   if (statusResp.ok) {
     state.albumTitle = statusResp.albumTitle || 'RM6 Pink Album';
+    state.eventLogoDataUrl = statusResp.eventLogoDataUrl || '';
     state.driveFolderId = statusResp.driveFolderId || '';
     state.driveFolderUrl = statusResp.driveFolderUrl || '';
     state.driveAuthMode = statusResp.driveAuthMode || 'local_only';
     state.oauthClientId = statusResp.oauthClientId || '';
     state.hasOauthOwner = Boolean(statusResp.hasOauthOwner);
     state.hasGeminiKey = Boolean(statusResp.hasGeminiKey);
-    state.searchEngineMode = statusResp.searchEngineMode || 'arcface';
+    state.searchEngineMode = statusResp.searchEngineMode || 'arcface_gemini';
     const isLocalHost = /^(localhost|127\.0\.0\.1|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/i.test(window.location.hostname);
     state.lanUrl = isLocalHost ? (statusResp.lanUrl || window.location.origin) : window.location.origin;
 
     $('albumTitleHeading').textContent = state.albumTitle;
     document.title = state.albumTitle;
+    renderBrandLogoUI();
     renderEngineModeUI();
 
     $('aiEngineStatus').textContent = statusResp.arcFaceReady ? 'ArcFace พร้อมใช้งาน' : 'ไม่พบโมเดล ArcFace';
@@ -181,7 +198,7 @@ function renderClusters() {
     item.innerHTML = `
       <div class="cluster-avatar-wrap">
         <img class="cluster-avatar" src="${cluster.avatarDataUrl || ''}" alt="${cluster.label}" />
-        <span class="cluster-count-badge">${cluster.photoCount}</span>
+        <span class="cluster-count-badge">ดูอีก ${cluster.photoCount} ภาพ</span>
       </div>
       <div class="cluster-label" title="คลิกเพื่อกรอง / ดับเบิลคลิกเพื่อเปลี่ยนชื่อ">${cluster.label}</div>
     `;
@@ -308,6 +325,8 @@ function updateSelectedCountUI() {
   const n = state.selectedPhotoIds.size;
   $('selectedCountSpan').textContent = n;
   $('btnDownloadZip').disabled = n === 0;
+  if ($('shareSelectedCountSpan')) $('shareSelectedCountSpan').textContent = n;
+  if ($('btnShareLineSelected')) $('btnShareLineSelected').disabled = n === 0;
 }
 
 function renderPhotoGrid() {
@@ -552,6 +571,7 @@ function closeSelfieCamera() {
 // ============================================================================
 
 function openLightbox(photo) {
+  state.currentLightboxPhoto = photo;
   $('lightboxTitle').textContent = photo.name;
   const img = $('lightboxImg');
   const layer = $('lightboxFaceLayer');
@@ -642,14 +662,14 @@ function initInAppBrowserBanner() {
 
   const btnOpen = $('btnOpenExternalBrowser');
   if (btnOpen) {
-    btnOpen.hidden = isIOS;
+    btnOpen.hidden = false;
     btnOpen.addEventListener('click', () => {
       const targetUrl = withExternalBrowserParam(window.location.href);
       if (isAndroid) {
         const clean = targetUrl.replace(/^https?:\/\//i, '');
         window.location.href = `intent://${clean}#Intent;scheme=https;package=com.android.chrome;end`;
       } else {
-        window.location.href = targetUrl;
+        window.open(targetUrl, '_blank', 'noopener') || (window.location.href = targetUrl);
       }
     });
   }
@@ -673,6 +693,63 @@ function initInAppBrowserBanner() {
   }
 
   banner.hidden = false;
+}
+
+const ADMIN_TOKEN_KEY = 'rm6_admin_token_v1';
+const VIEW_MODE_KEY = 'rm6_view_mode_v1';
+
+function getAdminToken() {
+  try { return window.sessionStorage.getItem(ADMIN_TOKEN_KEY) || ''; } catch { return ''; }
+}
+
+function setAdminToken(token) {
+  try {
+    if (token) window.sessionStorage.setItem(ADMIN_TOKEN_KEY, token);
+    else window.sessionStorage.removeItem(ADMIN_TOKEN_KEY);
+  } catch {}
+}
+
+function applyViewMode(mode) {
+  const m = mode === 'mobile' || mode === 'desktop' ? mode : 'auto';
+  document.body.classList.toggle('force-mobile', m === 'mobile');
+  document.body.classList.toggle('force-desktop', m === 'desktop');
+  try { window.localStorage.setItem(VIEW_MODE_KEY, m); } catch {}
+  const btn = $('btnToggleViewMode');
+  if (btn) {
+    btn.textContent = m === 'mobile' ? '📱 มือถือ' : (m === 'desktop' ? '💻 คอม' : '🖥️ อัตโนมัติ');
+  }
+}
+
+async function sharePhotosViaLine(photos) {
+  const list = (photos || []).filter(Boolean);
+  if (!list.length) return;
+  try {
+    if (navigator.share && navigator.canShare) {
+      const files = [];
+      for (const p of list.slice(0, 5)) {
+        const url = p.downloadUrl || p.thumbUrl;
+        if (!url) continue;
+        const resp = await fetch(url);
+        const blob = await resp.blob();
+        files.push(new File([blob], p.name || 'photo.jpg', { type: blob.type || 'image/jpeg' }));
+      }
+      if (files.length && navigator.canShare({ files })) {
+        await navigator.share({
+          files,
+          title: state.albumTitle,
+          text: `รูปภาพจาก ${state.albumTitle}`
+        });
+        return;
+      }
+    }
+  } catch (err) {
+    if (err && err.name === 'AbortError') return;
+  }
+
+  const first = list[0];
+  const shareUrl = first.webViewLink || `${window.location.origin}${first.downloadUrl || ''}`;
+  const lineUrl = `https://social-plugins.line.me/lineit/share?url=${encodeURIComponent(shareUrl)}`;
+  window.open(lineUrl, '_blank', 'noopener,noreferrer');
 }
 
 const GUEST_AVATAR_KEY = 'rm6_guest_avatar_v1';
@@ -852,12 +929,19 @@ window.addEventListener('DOMContentLoaded', async () => {
     await rescan();
   });
 
-  // Settings
-  $('btnOpenConfig').addEventListener('click', () => {
+  // Settings (Protected by Admin Login)
+  const openConfigModalUI = () => {
+    state.pendingLogoDataUrl = undefined;
     $('inputAlbumTitle').value = state.albumTitle;
     $('inputDriveFolderUrl').value = state.driveFolderUrl || state.driveFolderId;
-    $('inputDefaultEngineMode').value = state.searchEngineMode || 'arcface';
+    $('inputDefaultEngineMode').value = state.searchEngineMode || 'arcface_gemini';
     $('inputOauthClientId').value = state.oauthClientId || '';
+    $('inputNewAdminPassword').value = '';
+    const logoPreview = $('eventLogoPreview');
+    if (logoPreview) {
+      if (state.eventLogoDataUrl) { logoPreview.src = state.eventLogoDataUrl; logoPreview.hidden = false; }
+      else { logoPreview.hidden = true; logoPreview.removeAttribute('src'); }
+    }
     const sec = $('inputOauthClientSecret');
     sec.value = '';
     sec.placeholder = state.hasOauthOwner ? '•••••••••••• (เชื่อมต่อบัญชีแล้ว)' : 'GOCSPX-...';
@@ -866,18 +950,82 @@ window.addEventListener('DOMContentLoaded', async () => {
     gem.placeholder = state.hasGeminiKey ? '•••••••••••• (บันทึกคีย์ไว้แล้ว)' : 'AIzaSy... หรือ AQ...';
     $('geminiTestResult').hidden = true;
     $('configModal').hidden = false;
+  };
+
+  $('btnOpenConfig').addEventListener('click', async () => {
+    const token = getAdminToken();
+    if (token) {
+      const check = await fetch('/api/auth/verify', { headers: { 'x-admin-token': token } }).then((r) => r.json()).catch(() => ({}));
+      if (check && check.authenticated) {
+        openConfigModalUI();
+        return;
+      }
+      setAdminToken('');
+    }
+    $('inputAdminPassword').value = '';
+    $('adminLoginError').hidden = true;
+    $('adminLoginModal').hidden = false;
+    setTimeout(() => $('inputAdminPassword').focus(), 50);
   });
+
+  $('adminLoginForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const pwd = $('inputAdminPassword').value;
+    const errEl = $('adminLoginError');
+    errEl.hidden = true;
+    const resp = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pwd })
+    }).then((r) => r.json());
+    if (!resp.ok || !resp.token) {
+      errEl.textContent = resp.error || 'รหัสผ่านไม่ถูกต้อง';
+      errEl.hidden = false;
+      return;
+    }
+    setAdminToken(resp.token);
+    $('adminLoginModal').hidden = true;
+    openConfigModalUI();
+  });
+
+  if ($('inputEventLogoFile')) {
+    $('inputEventLogoFile').addEventListener('change', async (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      try {
+        const img = await loadImage(file);
+        const dataUrl = downscaleToDataUrl(img, 256, 0.9);
+        state.pendingLogoDataUrl = dataUrl;
+        $('eventLogoPreview').src = dataUrl;
+        $('eventLogoPreview').hidden = false;
+      } catch (err) {
+        window.alert(err.message);
+      }
+    });
+  }
+  if ($('btnClearEventLogo')) {
+    $('btnClearEventLogo').addEventListener('click', () => {
+      state.pendingLogoDataUrl = '';
+      $('inputEventLogoFile').value = '';
+      $('eventLogoPreview').hidden = true;
+      $('eventLogoPreview').removeAttribute('src');
+    });
+  }
 
   $('btnConnectGoogleOauth').addEventListener('click', async () => {
     const clientId = $('inputOauthClientId').value.trim();
     const clientSecret = $('inputOauthClientSecret').value.trim();
     if (!clientId) {
-      window.alert('กรุณากรอก Google OAuth Client ID และ Client Secret ก่อนกดล็อกอิน (Redirect URI: http://localhost:3000/api/drive/oauth/callback)');
+      window.alert('กรุณากรอก Google OAuth Client ID และ Client Secret ก่อนกดล็อกอิน');
       return;
     }
     const body = { oauthClientId: clientId };
     if (clientSecret) body.oauthClientSecret = clientSecret;
-    await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-admin-token': getAdminToken() },
+      body: JSON.stringify(body)
+    });
     window.location.href = '/api/drive/oauth/start?origin=' + encodeURIComponent(window.location.origin);
   });
 
@@ -919,12 +1067,18 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   $('configForm').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const mode = $('inputDefaultEngineMode').value || 'arcface';
+    const mode = $('inputDefaultEngineMode').value || 'arcface_gemini';
     const payload = {
       albumTitle: $('inputAlbumTitle').value.trim(),
       driveFolderUrl: $('inputDriveFolderUrl').value.trim(),
-      searchEngineMode: mode
+      searchEngineMode: mode,
+      faceMatchThreshold: Number($('thresholdSlider').value) || 0.40
     };
+    if (state.pendingLogoDataUrl !== undefined) {
+      payload.eventLogoDataUrl = state.pendingLogoDataUrl;
+    }
+    const newPwd = $('inputNewAdminPassword') ? $('inputNewAdminPassword').value.trim() : '';
+    if (newPwd) payload.newAdminPassword = newPwd;
     const gem = $('inputGeminiApiKey').value.trim();
     if (gem) payload.geminiApiKey = gem;
     const oid = $('inputOauthClientId').value.trim();
@@ -936,16 +1090,37 @@ window.addEventListener('DOMContentLoaded', async () => {
 
     const resp = await fetch('/api/config', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-admin-token': getAdminToken() },
       body: JSON.stringify(payload)
     }).then((r) => r.json());
     if (resp.ok) { $('configModal').hidden = true; await fetchStatusAndPhotos(); }
     else window.alert(resp.error || 'บันทึกไม่สำเร็จ');
   });
 
-  // Engine mode pills
-  $('btnModeArcface').addEventListener('click', () => selectEngineMode('arcface'));
-  $('btnModeGemini').addEventListener('click', () => selectEngineMode('arcface_gemini'));
+  // Mobile / Desktop View Mode Toggle
+  const savedView = (() => { try { return window.localStorage.getItem(VIEW_MODE_KEY) || 'auto'; } catch { return 'auto'; } })();
+  applyViewMode(savedView);
+  if ($('btnToggleViewMode')) {
+    $('btnToggleViewMode').addEventListener('click', () => {
+      const cur = document.body.classList.contains('force-mobile') ? 'mobile'
+        : (document.body.classList.contains('force-desktop') ? 'desktop' : 'auto');
+      const next = cur === 'auto' ? 'mobile' : (cur === 'mobile' ? 'desktop' : 'auto');
+      applyViewMode(next);
+    });
+  }
+
+  // LINE Share buttons
+  if ($('btnShareLineLightbox')) {
+    $('btnShareLineLightbox').addEventListener('click', () => {
+      if (state.currentLightboxPhoto) sharePhotosViaLine([state.currentLightboxPhoto]);
+    });
+  }
+  if ($('btnShareLineSelected')) {
+    $('btnShareLineSelected').addEventListener('click', () => {
+      const selected = state.photos.filter((p) => state.selectedPhotoIds.has(p.id));
+      sharePhotosViaLine(selected);
+    });
+  }
 
   // QR
   $('btnOpenQr').addEventListener('click', () => { $('qrUrlInput').value = withExternalBrowserParam(state.lanUrl || window.location.origin); renderQrModal(); });
