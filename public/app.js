@@ -120,7 +120,8 @@ async function fetchStatusAndPhotos() {
     state.hasOauthOwner = Boolean(statusResp.hasOauthOwner);
     state.hasGeminiKey = Boolean(statusResp.hasGeminiKey);
     state.searchEngineMode = statusResp.searchEngineMode || 'arcface';
-    state.lanUrl = statusResp.lanUrl || window.location.origin;
+    const isLocalHost = /^(localhost|127\.0\.0\.1|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/i.test(window.location.hostname);
+    state.lanUrl = isLocalHost ? (statusResp.lanUrl || window.location.origin) : window.location.origin;
 
     $('albumTitleHeading').textContent = state.albumTitle;
     document.title = state.albumTitle;
