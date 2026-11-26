@@ -488,14 +488,19 @@ function createAppServer(options = {}) {
       }
 
       // 2a. GET /api/drive/oauth/start & /api/drive/oauth/callback
-      const getOAuthRedirectUri = (r) => {
+      const getOAuthRedirectUri = (r, u) => {
+        const originParam = u && u.searchParams ? u.searchParams.get('origin') : '';
+        if (originParam && /^https?:\/\/[^/]+$/i.test(originParam.trim())) {
+          return `${originParam.trim()}/api/drive/oauth/callback`;
+        }
         const proto = String(r.headers['x-forwarded-proto'] || 'http').split(',')[0].trim();
         const host = String(r.headers['x-forwarded-host'] || r.headers.host || 'localhost:3000').split(',')[0].trim();
         return `${proto}://${host}/api/drive/oauth/callback`;
       };
 
       if (method === 'GET' && pathname === '/api/drive/oauth/start') {
-        const redirectUri = getOAuthRedirectUri(req);
+        const redirectUri = getOAuthRedirectUri(req, reqUrl);
+        global.__lastOAuthRedirectUri = redirectUri;
         const authUrl = buildGoogleOAuthUrl(config, redirectUri);
         res.writeHead(302, { Location: authUrl });
         return res.end();
@@ -507,7 +512,7 @@ function createAppServer(options = {}) {
           res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
           return res.end('<h3>ไม่พบรหัสยืนยันจาก Google OAuth</h3><a href="/">กลับหน้าหลัก</a>');
         }
-        const redirectUri = getOAuthRedirectUri(req);
+        const redirectUri = global.__lastOAuthRedirectUri || getOAuthRedirectUri(req, reqUrl);
         const tokens = await exchangeOAuthCode(config, code, redirectUri);
         if (tokens.refreshToken) config.oauthRefreshToken = tokens.refreshToken;
         if (tokens.accessToken) config.googleOauthToken = tokens.accessToken;

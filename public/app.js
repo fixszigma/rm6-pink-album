@@ -757,7 +757,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     const body = { oauthClientId: clientId };
     if (clientSecret) body.oauthClientSecret = clientSecret;
     await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    window.location.href = '/api/drive/oauth/start';
+    window.location.href = '/api/drive/oauth/start?origin=' + encodeURIComponent(window.location.origin);
   });
 
   $('btnTestGeminiKey').addEventListener('click', async () => {
