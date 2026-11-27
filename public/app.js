@@ -20,6 +20,10 @@ const state = {
   landingLocation2: '',
   landingDate: '',
   landingBgGradient: 'gsb_pink',
+  landingBgImageUrl: '',
+  pendingLandingBgImageUrl: undefined,
+  landingExpireDays: 5,
+  similarCandidates: [],
   showFaceBoxes: true,
   extraFriends: [], // [{ key, label, avatarUrl, photoIds: Set<string> }] max 2 extra (= 3 people total)
   selfieCaptureTarget: 'primary', // 'primary' | 'friend'
@@ -45,6 +49,66 @@ const state = {
 };
 
 const $ = (id) => document.getElementById(id);
+
+// ============================================================================
+// Styled Toast & Dialog Pop-ups (replaces native alert/confirm)
+// ============================================================================
+
+function showAppToast(message, durationMs = 2600) {
+  const wrap = $('appToastWrap');
+  if (!wrap) return;
+  const el = document.createElement('div');
+  el.className = 'app-toast';
+  el.textContent = message;
+  wrap.appendChild(el);
+  setTimeout(() => { el.remove(); }, durationMs);
+}
+
+function showAppDialog({ title = 'แจ้งเตือน', message = '', icon = '✨', confirmMode = false, okText = 'ตกลง', cancelText = 'ยกเลิก' } = {}) {
+  return new Promise((resolve) => {
+    const modal = $('appDialogModal');
+    if (!modal) { resolve(true); return; }
+    $('appDialogIcon').textContent = icon;
+    $('appDialogTitle').textContent = title;
+    $('appDialogMsg').textContent = message;
+    const okBtn = $('btnAppDialogOk');
+    const cancelBtn = $('btnAppDialogCancel');
+    okBtn.textContent = okText;
+    cancelBtn.textContent = cancelText;
+    cancelBtn.hidden = !confirmMode;
+    modal.hidden = false;
+
+    const cleanup = (val) => {
+      modal.hidden = true;
+      okBtn.onclick = null;
+      cancelBtn.onclick = null;
+      resolve(val);
+    };
+    okBtn.onclick = () => cleanup(true);
+    cancelBtn.onclick = () => cleanup(false);
+  });
+}
+
+function showAppAlert(message, opts = {}) {
+  const isErr = /ไม่สำเร็จ|ไม่ถูกต้อง|ไม่พบ|เกิน|ข้อผิดพลาด|❌|⚠️/.test(String(message));
+  return showAppDialog({
+    title: opts.title || (isErr ? 'แจ้งเตือน' : 'ดำเนินการสำเร็จ'),
+    message: String(message || ''),
+    icon: opts.icon || (isErr ? '⚠️' : '✅'),
+    confirmMode: false
+  });
+}
+
+function showAppConfirm(message, opts = {}) {
+  return showAppDialog({
+    title: opts.title || 'ยืนยันการทำรายการ',
+    message: String(message || ''),
+    icon: opts.icon || '❓',
+    confirmMode: true,
+    okText: opts.okText || 'ยืนยัน',
+    cancelText: opts.cancelText || 'ยกเลิก'
+  });
+}
 
 // ============================================================================
 // Image utilities
@@ -104,6 +168,11 @@ function renderLandingUI() {
   if (!card) return;
   const grad = state.landingBgGradient || 'gsb_pink';
   card.className = `landing-card landing-bg-${grad}`;
+  if (state.landingBgImageUrl) {
+    card.style.backgroundImage = `linear-gradient(180deg, rgba(255,255,255,0.74) 0%, rgba(255,255,255,0.58) 50%, rgba(255,255,255,0.78) 100%), url("${state.landingBgImageUrl}")`;
+  } else {
+    card.style.backgroundImage = '';
+  }
 
   const bankImg = $('landingBankLogoImg');
   const bankFb = $('landingBankLogoFallback');
@@ -122,6 +191,15 @@ function renderLandingUI() {
   $('landingTitle1El').textContent = state.landingTitle1 || state.albumTitle || 'RM6 Pink Album';
   const t2 = $('landingTitle2El');
   if (t2) { t2.textContent = state.landingTitle2 || ''; t2.hidden = !state.landingTitle2; }
+
+  const days = Number(state.landingExpireDays);
+  const showExpire = Number.isFinite(days) && days > 0;
+  if ($('landingExpireBanner')) $('landingExpireBanner').hidden = !showExpire;
+  if ($('landingGuideExpireStep')) $('landingGuideExpireStep').hidden = !showExpire;
+  if (showExpire) {
+    if ($('landingExpireDaysBadge')) $('landingExpireDaysBadge').textContent = String(days);
+    if ($('landingGuideDaysSpan')) $('landingGuideDaysSpan').textContent = String(days);
+  }
 
   const setMeta = (wrapId, textId, val) => {
     const w = $(wrapId);
@@ -193,6 +271,8 @@ async function fetchStatusAndPhotos() {
     state.landingLocation2 = statusResp.landingLocation2 || '';
     state.landingDate = statusResp.landingDate || '';
     state.landingBgGradient = statusResp.landingBgGradient || 'gsb_pink';
+    state.landingBgImageUrl = statusResp.landingBgImageUrl || '';
+    state.landingExpireDays = statusResp.landingExpireDays !== undefined ? Number(statusResp.landingExpireDays) : 5;
     state.driveFolderId = statusResp.driveFolderId || '';
     state.driveFolderUrl = statusResp.driveFolderUrl || '';
     state.driveAuthMode = statusResp.driveAuthMode || 'local_only';
@@ -274,17 +354,20 @@ function renderClusters() {
       <div class="cluster-label" title="คลิกเพื่อกรอง / ดับเบิลคลิกเพื่อเปลี่ยนชื่อ">${cluster.label}</div>
     `;
 
-    // Click a person => filter photos for that person (can then add up to 2 friends from the top card)
+    // Click a person => filter photos for that person + fetch borderline similar suggestions
     item.addEventListener('click', () => {
       if (state.activeClusterId === cluster.id) { clearAllFilters(); return; }
       state.searchMatches = null;
       state.lastQuery = null;
       state.extraFriends = [];
+      state.similarCandidates = [];
+      state.visiblePageLimit = 40;
       state.activeClusterId = cluster.id;
       saveGuestAvatar({ type: 'cluster', clusterId: cluster.id, avatarUrl: cluster.avatarDataUrl || '' });
       syncFilterBannerUI();
       renderClusters();
       renderPhotoGrid();
+      loadSimilarClustersForActive(cluster.id);
     });
 
     item.addEventListener('dblclick', async (e) => {
@@ -378,7 +461,7 @@ function renderFriendPickerModal() {
         state.extraFriends.splice(existingIdx, 1);
       } else {
         if (state.extraFriends.length >= 2) {
-          window.alert('เพิ่มเพื่อนได้สูงสุด 2 คน (รวมทั้งหมดไม่เกิน 3 คนในรูป)');
+          showAppAlert('เพิ่มเพื่อนได้สูงสุด 2 คน (รวมทั้งหมดไม่เกิน 3 คนในรูป)');
           return;
         }
         const matchedIds = new Set(
@@ -403,7 +486,7 @@ function renderFriendPickerModal() {
 
 async function addFriendFromImageElement(imgOrCanvas) {
   if (state.extraFriends.length >= 2) {
-    window.alert('เพิ่มเพื่อนได้สูงสุด 2 คน (รวมทั้งหมดไม่เกิน 3 คนในรูป)');
+    showAppAlert('เพิ่มเพื่อนได้สูงสุด 2 คน (รวมทั้งหมดไม่เกิน 3 คนในรูป)');
     return;
   }
   const statusEl = $('friendSelfieStatus');
@@ -445,11 +528,179 @@ async function addFriendFromImageElement(imgOrCanvas) {
   }
 }
 
-function getVisiblePhotos() {
-  let list = Array.isArray(state.searchMatches) ? state.searchMatches : state.photos;
-  if (!Array.isArray(state.searchMatches) && state.activeClusterId) {
-    list = list.filter((p) => Array.isArray(p.clusterIds) && p.clusterIds.includes(state.activeClusterId));
+const USER_FACE_MERGES_KEY = 'rm6_user_face_merges_v1';
+
+function loadUserFaceMerges() {
+  try {
+    const raw = window.localStorage.getItem(USER_FACE_MERGES_KEY);
+    return raw ? JSON.parse(raw) : { confirmed: {}, dismissed: {} };
+  } catch {
+    return { confirmed: {}, dismissed: {} };
   }
+}
+
+function saveUserFaceMerges(obj) {
+  try { window.localStorage.setItem(USER_FACE_MERGES_KEY, JSON.stringify(obj)); } catch {}
+}
+
+function currentPrimaryMergeKey() {
+  if (state.activeClusterId) return `cluster:${state.activeClusterId}`;
+  if (Array.isArray(state.searchMatches)) {
+    const av = (state.lastSearchMeta && state.lastSearchMeta.queryFaceAvatarUrl) || (state.lastQuery && state.lastQuery.avatarUrl) || 'selfie';
+    return `selfie:${av.slice(-40)}`;
+  }
+  return '';
+}
+
+function getConfirmedSimilarClusterIds() {
+  const key = currentPrimaryMergeKey();
+  if (!key) return [];
+  const store = loadUserFaceMerges();
+  return Array.isArray(store.confirmed && store.confirmed[key]) ? store.confirmed[key] : [];
+}
+
+async function loadSimilarClustersForActive(clusterId) {
+  try {
+    const resp = await fetch(`/api/clusters/${encodeURIComponent(clusterId)}/similar`).then((r) => r.json());
+    if (state.activeClusterId !== clusterId) return;
+    state.similarCandidates = (resp && resp.ok && Array.isArray(resp.similar)) ? resp.similar : [];
+    renderSimilarFacesUI();
+    syncFilterBannerUI();
+    renderPhotoGrid();
+  } catch {
+    state.similarCandidates = [];
+    renderSimilarFacesUI();
+  }
+}
+
+function renderSimilarFacesUI() {
+  const box = $('similarFacesBox');
+  const listEl = $('similarFacesList');
+  if (!box || !listEl) return;
+
+  const key = currentPrimaryMergeKey();
+  if (!key) { box.hidden = true; listEl.innerHTML = ''; return; }
+
+  const store = loadUserFaceMerges();
+  const confirmedIds = new Set((store.confirmed && store.confirmed[key]) || []);
+  const dismissedIds = new Set((store.dismissed && store.dismissed[key]) || []);
+
+  // Include both API candidates + any previously confirmed clusters from state.clusters
+  const candidateMap = new Map();
+  for (const sc of (state.similarCandidates || [])) {
+    if (!dismissedIds.has(sc.id)) candidateMap.set(sc.id, sc);
+  }
+  for (const cid of confirmedIds) {
+    if (!candidateMap.has(cid)) {
+      const c = state.clusters.find((x) => x.id === cid);
+      if (c) candidateMap.set(cid, c);
+    }
+  }
+
+  const items = Array.from(candidateMap.values());
+  if (!items.length) {
+    box.hidden = true;
+    listEl.innerHTML = '';
+    return;
+  }
+
+  listEl.innerHTML = '';
+  const isAdmin = Boolean(getAdminToken());
+  items.forEach((sc) => {
+    const isConf = confirmedIds.has(sc.id);
+    const card = document.createElement('div');
+    card.className = `similar-face-card${isConf ? ' confirmed' : ''}`;
+    card.innerHTML = `
+      <img src="${sc.avatarDataUrl || ''}" alt="${sc.label}" />
+      <div class="similar-face-meta">
+        <div style="font-weight:700;color:var(--text);">${sc.label}</div>
+        <div style="color:var(--text-muted);">${sc.photoCount || 0} รูป${sc.similarity ? ` • คล้าย ${sc.similarity}%` : ''}</div>
+      </div>
+      <div class="similar-face-btns">
+        <button type="button" class="btn-xs-confirm">${isConf ? '✓ รวมแล้ว (ยกเลิก)' : '✓ ใช่ คนเดียวกัน'}</button>
+        ${!isConf ? '<button type="button" class="btn-xs-dismiss" title="ไม่ใช่คนเดียวกัน">✕</button>' : ''}
+        ${isAdmin && state.activeClusterId ? '<button type="button" class="btn-xs-dismiss" data-admin-merge="1" title="รวมถาวรสำหรับทุกคน (Admin)">🔗 รวมถาวร</button>' : ''}
+      </div>
+    `;
+
+    card.querySelector('.btn-xs-confirm').addEventListener('click', () => {
+      const cur = loadUserFaceMerges();
+      cur.confirmed = cur.confirmed || {};
+      const arr = new Set(cur.confirmed[key] || []);
+      if (arr.has(sc.id)) {
+        arr.delete(sc.id);
+        showAppToast(`ยกเลิกการรวม ${sc.label} แล้ว`);
+      } else {
+        arr.add(sc.id);
+        showAppToast(`✓ รวมรูปของ ${sc.label} เข้ามาแสดงด้วยแล้ว`);
+      }
+      cur.confirmed[key] = Array.from(arr);
+      saveUserFaceMerges(cur);
+      renderSimilarFacesUI();
+      syncFilterBannerUI();
+      renderPhotoGrid();
+    });
+
+    const dismissBtn = card.querySelector('.btn-xs-dismiss:not([data-admin-merge])');
+    if (dismissBtn) {
+      dismissBtn.addEventListener('click', () => {
+        const cur = loadUserFaceMerges();
+        cur.dismissed = cur.dismissed || {};
+        const dArr = new Set(cur.dismissed[key] || []);
+        dArr.add(sc.id);
+        cur.dismissed[key] = Array.from(dArr);
+        saveUserFaceMerges(cur);
+        renderSimilarFacesUI();
+      });
+    }
+
+    const adminMergeBtn = card.querySelector('[data-admin-merge="1"]');
+    if (adminMergeBtn) {
+      adminMergeBtn.addEventListener('click', async () => {
+        const ok = await showAppConfirm(`รวม "${sc.label}" เข้ากับบุคคลปัจจุบันอย่างถาวรสำหรับผู้ใช้ทุกคนใช่หรือไม่?`, { icon: '🔗', title: 'ยืนยันรวมกลุ่มถาวร (Admin)' });
+        if (!ok) return;
+        const resp = await fetch('/api/clusters/merge', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-admin-token': getAdminToken() },
+          body: JSON.stringify({ targetClusterId: state.activeClusterId, sourceClusterId: sc.id })
+        }).then((r) => r.json());
+        if (resp.ok) {
+          showAppToast('รวมกลุ่มใบหน้าถาวรเรียบร้อยแล้ว');
+          await fetchStatusAndPhotos();
+          loadSimilarClustersForActive(state.activeClusterId);
+        } else {
+          showAppAlert(resp.error || 'รวมกลุ่มไม่สำเร็จ');
+        }
+      });
+    }
+
+    listEl.appendChild(card);
+  });
+
+  box.hidden = false;
+}
+
+function getVisiblePhotos() {
+  const confirmedExtraClusterIds = getConfirmedSimilarClusterIds();
+  let list = [];
+  if (Array.isArray(state.searchMatches)) {
+    list = [...state.searchMatches];
+    if (confirmedExtraClusterIds.length > 0) {
+      const seen = new Set(list.map((p) => p.id));
+      for (const p of state.photos) {
+        if (!seen.has(p.id) && Array.isArray(p.clusterIds) && confirmedExtraClusterIds.some((cid) => p.clusterIds.includes(cid))) {
+          seen.add(p.id);
+          list.push(p);
+        }
+      }
+    }
+  } else if (state.activeClusterId) {
+    const validClusters = new Set([state.activeClusterId, ...confirmedExtraClusterIds]);
+    list = state.photos.filter((p) => Array.isArray(p.clusterIds) && p.clusterIds.some((cid) => validClusters.has(cid)));
+  } else {
+    list = state.photos;
+  }
+
   if (state.extraFriends.length > 0) {
     list = list.filter((p) => state.extraFriends.every((f) => f.photoIds && f.photoIds.has(p.id)));
   }
@@ -462,16 +713,21 @@ function clearAllFilters() {
   state.lastQuery = null;
   state.lastSearchMeta = null;
   state.extraFriends = [];
+  state.similarCandidates = [];
   state.visiblePageLimit = 40;
   $('fileInputQueryFace').value = '';
   $('fileInputSelfieCapture').value = '';
+  renderSimilarFacesUI();
   syncFilterBannerUI();
   renderClusters();
   renderPhotoGrid();
 }
 
-function renderAiGraphicTag(label) {
-  return `<span class="ai-visual-graphic"><span class="ai-graphic-dot"></span><span class="ai-bars"><span></span><span></span><span></span><span></span></span><span style="font-size:0.78rem;font-weight:600;color:var(--pink-700);">${label}</span></span>`;
+function renderAiGraphicTag(label, mode = 'done') {
+  if (mode === 'working') {
+    return `<span class="ai-status-pill is-working"><span class="ai-radar-spinner"></span><span>กำลังดำเนินการ • ${label}</span></span>`;
+  }
+  return `<span class="ai-status-pill is-done"><span class="ai-done-check">✓</span><span>ดำเนินการเสร็จแล้ว • ${label}</span></span>`;
 }
 
 function syncFilterBannerUI() {
@@ -647,13 +903,14 @@ async function handleUploadFiles(fileList, sourceLabel = 'web_upload') {
   const files = Array.from(fileList || []).filter((f) =>
     f.type.startsWith('image/') || /\.(jpe?g|png|webp|gif)$/i.test(f.name)
   );
-  if (!files.length) { window.alert('ไม่พบไฟล์รูปภาพที่รองรับ'); return; }
+  if (!files.length) { showAppAlert('ไม่พบไฟล์รูปภาพที่รองรับ'); return; }
 
   const box = $('uploadProgressBox');
   const text = $('uploadProgressText');
   const bar = $('uploadProgressBar');
   box.hidden = false;
   bar.style.width = '3%';
+  text.innerHTML = renderAiGraphicTag(`กำลังอัปโหลดและสแกนใบหน้า (0/${files.length} รูป)...`, 'working');
 
   let completed = 0;
   let failed = 0;
@@ -697,11 +954,13 @@ async function handleUploadFiles(fileList, sourceLabel = 'web_upload') {
   }
 
   bar.style.width = '100%';
-  text.textContent = failed
-    ? `เสร็จสิ้น (สำเร็จ ${files.length - failed} / ล้มเหลว ${failed}) • ซิงก์ Google Drive ต่อเบื้องหลัง`
-    : `อัปโหลดและสแกนใบหน้าสำเร็จ ${files.length} รูป • ซิงก์ Google Drive เบื้องหลัง`;
+  const doneLabel = failed
+    ? `สำเร็จ ${files.length - failed} รูป (ล้มเหลว ${failed}) • ซิงก์ Google Drive เบื้องหลัง`
+    : `อัปโหลดและสแกนใบหน้าครบ ${files.length} รูป • ซิงก์ Google Drive เบื้องหลัง`;
+  text.innerHTML = renderAiGraphicTag(doneLabel, 'done');
+  showAppToast(`✓ อัปโหลดสำเร็จ ${files.length - failed} รูป`);
   await fetchStatusAndPhotos();
-  setTimeout(() => { box.hidden = true; }, 2600);
+  setTimeout(() => { box.hidden = true; }, 3200);
 }
 
 // ============================================================================
@@ -718,9 +977,11 @@ async function executeSearch(query) {
   $('btnClearFaceFilter').hidden = false;
   if (query.avatarUrl) { $('queryFacePreviewImg').src = query.avatarUrl; $('queryFacePreviewImg').hidden = false; }
 
-  $('activeFilterTitle').textContent = 'กำลังค้นหา...';
-  $('activeEngineTagWrap').innerHTML = renderAiGraphicTag('🔄 กำลังวิเคราะห์ใบหน้า...');
+  $('activeFilterTitle').textContent = 'กำลังดำเนินการวิเคราะห์ใบหน้า...';
+  $('activeEngineTagWrap').innerHTML = renderAiGraphicTag('กำลังสแกนและคัดแยกใบหน้าด้วย AI', 'working');
   $('activeFilterSub').textContent = '';
+  state.similarCandidates = [];
+  renderSimilarFacesUI();
 
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 60000);
@@ -764,6 +1025,8 @@ async function executeSearch(query) {
 
     state.activeClusterId = null;
     state.searchMatches = resp.results || [];
+    state.similarCandidates = Array.isArray(resp.similarClusters) ? resp.similarClusters : [];
+    state.visiblePageLimit = 40;
     state.lastSearchMeta = {
       geminiUsed: Boolean(resp.geminiUsed),
       geminiModel: resp.geminiModel || '',
@@ -773,6 +1036,7 @@ async function executeSearch(query) {
       durationMs: resp.durationMs || 0
     };
     syncFilterBannerUI();
+    renderSimilarFacesUI();
     renderClusters();
     renderPhotoGrid();
     switchTab('search');
@@ -994,7 +1258,7 @@ function initInAppBrowserBanner() {
         document.execCommand('copy');
         document.body.removeChild(tmp);
       }
-      window.alert('คัดลอกลิงก์แล้ว! นำไปวางเปิดใน Safari หรือ Chrome ได้เลยครับ');
+      showAppAlert('คัดลอกลิงก์แล้ว! นำไปวางเปิดใน Safari หรือ Chrome ได้เลยครับ', { icon: '📋', title: 'คัดลอกลิงก์สำเร็จ' });
     });
   }
 
@@ -1114,7 +1378,7 @@ async function downloadSelectedAsZip() {
   let ids = Array.from(state.selectedPhotoIds);
   if (!ids.length) return;
   if (ids.length > 40) {
-    window.alert('ดาวน์โหลด ZIP ได้ครั้งละไม่เกิน 40 รูป ระบบจะดาวน์โหลด 40 รูปแรกให้ก่อนครับ');
+    await showAppAlert('ดาวน์โหลด ZIP ได้ครั้งละไม่เกิน 40 รูป ระบบจะดาวน์โหลด 40 รูปแรกให้ก่อนครับ', { icon: '📦', title: 'จำกัดขนาดไฟล์ ZIP' });
     ids = ids.slice(0, 40);
   }
   const btn = $('btnDownloadZip');
@@ -1138,7 +1402,7 @@ async function downloadSelectedAsZip() {
     a.remove();
     URL.revokeObjectURL(url);
   } catch (err) {
-    window.alert(err.message);
+    showAppAlert(err.message);
   } finally {
     btn.innerHTML = orig;
     updateSelectedCountUI();
@@ -1201,11 +1465,11 @@ window.addEventListener('DOMContentLoaded', async () => {
     try {
       const resp = await fetch('/api/drive/sync', { method: 'POST' }).then((r) => r.json());
       if (!resp.ok) {
-        window.alert(resp.error || 'ซิงก์ไม่สำเร็จ');
+        await showAppAlert(resp.error || 'ซิงก์ไม่สำเร็จ');
         $('configModal').hidden = false;
       } else {
         await fetchStatusAndPhotos();
-        window.alert(`ซิงก์สำเร็จ (ดึงใหม่ ${resp.pulledFromDrive || 0} รูป / ส่งขึ้น ${resp.pushedToDrive || 0} รูป)`);
+        await showAppAlert(`ดึงรูปใหม่ ${resp.pulledFromDrive || 0} รูป • ส่งขึ้น Drive ${resp.pushedToDrive || 0} รูป`, { icon: '☁️', title: 'ซิงก์ Google Drive สำเร็จ' });
       }
     } finally {
       btn.disabled = false;
@@ -1216,20 +1480,33 @@ window.addEventListener('DOMContentLoaded', async () => {
   // Re-scan whole folder with ArcFace
   const rescan = async () => {
     const btn = $('btnAnalyzeHogFolder');
+    const box = $('uploadProgressBox');
+    const text = $('uploadProgressText');
+    const bar = $('uploadProgressBar');
     btn.disabled = true;
-    btn.textContent = 'กำลังสแกนใบหน้า...';
+    btn.textContent = '🔄 กำลังดำเนินการสแกน...';
+    if (box && text && bar) {
+      box.hidden = false;
+      bar.style.width = '45%';
+      text.innerHTML = renderAiGraphicTag('กำลังคัดแยกและวิเคราะห์ใบหน้าทั้งโฟลเดอร์...', 'working');
+    }
     try {
       const resp = await fetch('/api/photos/reindex-arcface', { method: 'POST' }).then((r) => r.json());
       if (resp.ok) {
+        if (bar && text) {
+          bar.style.width = '100%';
+          text.innerHTML = renderAiGraphicTag(`สแกนครบ ${resp.indexedCount ?? 0} รูป (${resp.totalFaces ?? 0} ใบหน้า)`, 'done');
+        }
         clearAllFilters();
         await fetchStatusAndPhotos();
-        window.alert(`สแกนเสร็จแล้ว: ${resp.indexedCount ?? 0} รูป • ${resp.totalFaces ?? 0} ใบหน้า`);
+        await showAppAlert(`วิเคราะห์ใบหน้าสำเร็จ ${resp.indexedCount ?? 0} รูป • พบทั้งหมด ${resp.totalFaces ?? 0} ใบหน้า`, { icon: '🎯', title: 'ดำเนินการเสร็จแล้ว' });
       } else {
-        window.alert(resp.error || 'สแกนไม่สำเร็จ');
+        await showAppAlert(resp.error || 'สแกนไม่สำเร็จ');
       }
     } finally {
       btn.disabled = false;
       btn.textContent = '🎯 สแกนใบหน้าทั้งโฟลเดอร์ใหม่';
+      if (box) setTimeout(() => { box.hidden = true; }, 2200);
     }
   };
   $('btnAnalyzeHogFolder').addEventListener('click', rescan);
@@ -1255,17 +1532,24 @@ window.addEventListener('DOMContentLoaded', async () => {
     switchConfigTab('decor');
     state.pendingLogoDataUrl = undefined;
     state.pendingBankLogoDataUrl = undefined;
+    state.pendingLandingBgImageUrl = undefined;
     $('inputAlbumTitle').value = state.albumTitle;
     $('inputDriveFolderUrl').value = state.driveFolderUrl || state.driveFolderId;
     $('inputDefaultEngineMode').value = state.searchEngineMode || 'arcface_gemini';
     $('inputOauthClientId').value = state.oauthClientId || '';
     $('inputNewAdminPassword').value = '';
     $('inputLandingBgGradient').value = state.landingBgGradient || 'gsb_pink';
+    if ($('inputLandingExpireDays')) $('inputLandingExpireDays').value = String(state.landingExpireDays ?? 5);
     $('inputLandingTitle1').value = state.landingTitle1 || '';
     $('inputLandingTitle2').value = state.landingTitle2 || '';
     $('inputLandingLocation1').value = state.landingLocation1 || '';
     $('inputLandingLocation2').value = state.landingLocation2 || '';
     $('inputLandingDate').value = state.landingDate || '';
+    const bgPreview = $('landingBgPreview');
+    if (bgPreview) {
+      if (state.landingBgImageUrl) { bgPreview.src = state.landingBgImageUrl; bgPreview.hidden = false; }
+      else { bgPreview.hidden = true; bgPreview.removeAttribute('src'); }
+    }
     const bankPreview = $('bankLogoPreview');
     if (bankPreview) {
       if (state.bankLogoDataUrl) { bankPreview.src = state.bankLogoDataUrl; bankPreview.hidden = false; }
@@ -1322,6 +1606,30 @@ window.addEventListener('DOMContentLoaded', async () => {
     openConfigModalUI();
   });
 
+  if ($('inputLandingBgFile')) {
+    $('inputLandingBgFile').addEventListener('change', async (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      try {
+        const img = await loadImage(file);
+        const dataUrl = downscaleToDataUrl(img, 1440, 0.86);
+        state.pendingLandingBgImageUrl = dataUrl;
+        $('landingBgPreview').src = dataUrl;
+        $('landingBgPreview').hidden = false;
+      } catch (err) {
+        showAppAlert(err.message);
+      }
+    });
+  }
+  if ($('btnClearLandingBg')) {
+    $('btnClearLandingBg').addEventListener('click', () => {
+      state.pendingLandingBgImageUrl = '';
+      $('inputLandingBgFile').value = '';
+      $('landingBgPreview').hidden = true;
+      $('landingBgPreview').removeAttribute('src');
+    });
+  }
+
   if ($('inputBankLogoFile')) {
     $('inputBankLogoFile').addEventListener('change', async (e) => {
       const file = e.target.files && e.target.files[0];
@@ -1333,7 +1641,7 @@ window.addEventListener('DOMContentLoaded', async () => {
         $('bankLogoPreview').src = dataUrl;
         $('bankLogoPreview').hidden = false;
       } catch (err) {
-        window.alert(err.message);
+        showAppAlert(err.message);
       }
     });
   }
@@ -1357,7 +1665,7 @@ window.addEventListener('DOMContentLoaded', async () => {
         $('eventLogoPreview').src = dataUrl;
         $('eventLogoPreview').hidden = false;
       } catch (err) {
-        window.alert(err.message);
+        showAppAlert(err.message);
       }
     });
   }
@@ -1374,7 +1682,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     const clientId = $('inputOauthClientId').value.trim();
     const clientSecret = $('inputOauthClientSecret').value.trim();
     if (!clientId) {
-      window.alert('กรุณากรอก Google OAuth Client ID และ Client Secret ก่อนกดล็อกอิน');
+      await showAppAlert('กรุณากรอก Google OAuth Client ID และ Client Secret ก่อนกดล็อกอิน');
       return;
     }
     const body = { oauthClientId: clientId };
@@ -1436,13 +1744,17 @@ window.addEventListener('DOMContentLoaded', async () => {
       landingTitle2: $('inputLandingTitle2') ? $('inputLandingTitle2').value.trim() : '',
       landingLocation1: $('inputLandingLocation1') ? $('inputLandingLocation1').value.trim() : '',
       landingLocation2: $('inputLandingLocation2') ? $('inputLandingLocation2').value.trim() : '',
-      landingDate: $('inputLandingDate') ? $('inputLandingDate').value.trim() : ''
+      landingDate: $('inputLandingDate') ? $('inputLandingDate').value.trim() : '',
+      landingExpireDays: $('inputLandingExpireDays') ? Number($('inputLandingExpireDays').value) : 5
     };
     if (state.pendingLogoDataUrl !== undefined) {
       payload.eventLogoDataUrl = state.pendingLogoDataUrl;
     }
     if (state.pendingBankLogoDataUrl !== undefined) {
       payload.bankLogoDataUrl = state.pendingBankLogoDataUrl;
+    }
+    if (state.pendingLandingBgImageUrl !== undefined) {
+      payload.landingBgImageUrl = state.pendingLandingBgImageUrl;
     }
     const newPwd = $('inputNewAdminPassword') ? $('inputNewAdminPassword').value.trim() : '';
     if (newPwd) payload.newAdminPassword = newPwd;
@@ -1460,8 +1772,13 @@ window.addEventListener('DOMContentLoaded', async () => {
       headers: { 'Content-Type': 'application/json', 'x-admin-token': getAdminToken() },
       body: JSON.stringify(payload)
     }).then((r) => r.json());
-    if (resp.ok) { $('configModal').hidden = true; await fetchStatusAndPhotos(); }
-    else window.alert(resp.error || 'บันทึกไม่สำเร็จ');
+    if (resp.ok) {
+      $('configModal').hidden = true;
+      showAppToast('✓ บันทึกการตั้งค่าเรียบร้อยแล้ว');
+      await fetchStatusAndPhotos();
+    } else {
+      await showAppAlert(resp.error || 'บันทึกไม่สำเร็จ');
+    }
   });
 
   // Mobile / Desktop View Mode Toggle
@@ -1477,7 +1794,6 @@ window.addEventListener('DOMContentLoaded', async () => {
   }
 
   // Add Friend Popup Modal + Lightbox Left/Right navigation
-  if ($('btnOpenAddFriendModal')) $('btnOpenAddFriendModal').addEventListener('click', openAddFriendModal);
   if ($('btnFriendSelfie')) $('btnFriendSelfie').addEventListener('click', () => openSelfieCamera('friend'));
   if ($('btnFriendPickPhoto')) $('btnFriendPickPhoto').addEventListener('click', () => $('fileInputFriendPhoto').click());
   const onFriendFacePicked = async (e) => {
@@ -1485,7 +1801,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     e.target.value = '';
     if (!file) return;
     try { await addFriendFromImageElement(await loadImage(file)); }
-    catch (err) { window.alert(err.message); }
+    catch (err) { showAppAlert(err.message); }
   };
   if ($('fileInputFriendSelfie')) $('fileInputFriendSelfie').addEventListener('change', onFriendFacePicked);
   if ($('fileInputFriendPhoto')) $('fileInputFriendPhoto').addEventListener('change', onFriendFacePicked);
@@ -1505,7 +1821,8 @@ window.addEventListener('DOMContentLoaded', async () => {
     $('btnDeletePhotoAdmin').addEventListener('click', async () => {
       const photo = state.currentLightboxPhoto;
       if (!photo) return;
-      if (!window.confirm(`ยืนยันการลบรูป "${photo.name}" ใช่หรือไม่?`)) return;
+      const confirmed = await showAppConfirm(`ยืนยันการลบรูป "${photo.name}" ออกจากระบบใช่หรือไม่?`, { icon: '🗑️', title: 'ยืนยันการลบรูปภาพ', okText: 'ลบรูปภาพ' });
+      if (!confirmed) return;
       const resp = await fetch(`/api/photos/${encodeURIComponent(photo.id)}`, {
         method: 'DELETE',
         headers: { 'x-admin-token': getAdminToken() }
@@ -1515,7 +1832,7 @@ window.addEventListener('DOMContentLoaded', async () => {
           setAdminToken('');
           $('btnDeletePhotoAdmin').hidden = true;
         }
-        window.alert(resp.error || 'ลบรูปไม่สำเร็จ');
+        await showAppAlert(resp.error || 'ลบรูปไม่สำเร็จ');
         return;
       }
       $('lightboxModal').hidden = true;
@@ -1523,6 +1840,7 @@ window.addEventListener('DOMContentLoaded', async () => {
       if (Array.isArray(state.searchMatches)) {
         state.searchMatches = state.searchMatches.filter((m) => m.id !== photo.id);
       }
+      showAppToast('🗑️ ลบรูปภาพเรียบร้อยแล้ว');
       await fetchStatusAndPhotos();
       syncFilterBannerUI();
     });
@@ -1605,7 +1923,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     const val = $('qrUrlInput').value.trim();
     if (navigator.clipboard && window.isSecureContext) await navigator.clipboard.writeText(val);
     else { $('qrUrlInput').select(); document.execCommand('copy'); }
-    window.alert('คัดลอกลิงก์แล้ว');
+    showAppToast('📋 คัดลอกลิงก์แล้ว');
   });
   $('btnDownloadQrPng').addEventListener('click', () => {
     const a = document.createElement('a');
@@ -1639,7 +1957,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     try {
       state.extraFriends = [];
       await searchFromImageElement(await loadImage(file));
-    } catch (err) { window.alert(err.message); }
+    } catch (err) { showAppAlert(err.message); }
   };
   $('btnPickQueryFace').addEventListener('click', () => $('fileInputQueryFace').click());
   $('fileInputQueryFace').addEventListener('change', onFacePicked);

@@ -18,6 +18,7 @@ const {
   DEFAULT_SEARCH_COSINE,
   sanitizeCosineThreshold,
   normalizeVector,
+  cosineSimilarity,
   recomputeClusters,
   searchByFaceVectors
 } = require('./lib/face-engine');
@@ -143,6 +144,8 @@ function createAppServer(options = {}) {
     landingLocation2: '',
     landingDate: '',
     landingBgGradient: 'gsb_pink',
+    landingBgImageUrl: '',
+    landingExpireDays: 5,
     adminPassword: process.env.ADMIN_PASSWORD || 'rm6admin',
     driveFolderUrl: defaultFolderUrl || buildDriveFolderWebUrl(defaultFolderId),
     driveFolderId: defaultFolderId,
@@ -624,13 +627,8 @@ function createAppServer(options = {}) {
           landingLocation2: config.landingLocation2 || '',
           landingDate: config.landingDate || '',
           landingBgGradient: config.landingBgGradient || 'gsb_pink',
-          bankLogoDataUrl: config.bankLogoDataUrl || '',
-          landingTitle1: config.landingTitle1 || '',
-          landingTitle2: config.landingTitle2 || '',
-          landingLocation1: config.landingLocation1 || '',
-          landingLocation2: config.landingLocation2 || '',
-          landingDate: config.landingDate || '',
-          landingBgGradient: config.landingBgGradient || 'gsb_pink',
+          landingBgImageUrl: config.landingBgImageUrl || '',
+          landingExpireDays: config.landingExpireDays !== undefined ? Number(config.landingExpireDays) : 5,
           driveFolderId: folderId,
           driveFolderUrl: folderId ? buildDriveFolderWebUrl(folderId) : (config.driveFolderUrl || ''),
           driveAuthMode: getDriveAuthMode(config),
@@ -690,6 +688,25 @@ function createAppServer(options = {}) {
         if (typeof body.landingDate === 'string') config.landingDate = body.landingDate.trim();
         if (typeof body.landingBgGradient === 'string' && body.landingBgGradient.trim()) {
           config.landingBgGradient = body.landingBgGradient.trim();
+        }
+        if (typeof body.landingBgImageUrl === 'string') {
+          const rawBg = body.landingBgImageUrl.trim();
+          if (!rawBg) {
+            config.landingBgImageUrl = '';
+          } else if (rawBg.startsWith('data:image/')) {
+            const bgBuf = decodeBase64Data(rawBg);
+            if (bgBuf && bgBuf.length) {
+              const bgName = `landing_bg_${Date.now()}.jpg`;
+              await fsp.writeFile(path.join(avatarsDir, bgName), bgBuf);
+              config.landingBgImageUrl = `/api/avatars/${bgName}`;
+            }
+          } else {
+            config.landingBgImageUrl = rawBg;
+          }
+        }
+        if (body.landingExpireDays !== undefined) {
+          const d = Math.max(0, Math.min(365, Math.round(Number(body.landingExpireDays) || 0)));
+          config.landingExpireDays = d;
         }
         if (typeof body.newAdminPassword === 'string' && body.newAdminPassword.trim()) {
           config.adminPassword = body.newAdminPassword.trim();
@@ -764,13 +781,8 @@ function createAppServer(options = {}) {
           landingLocation2: config.landingLocation2 || '',
           landingDate: config.landingDate || '',
           landingBgGradient: config.landingBgGradient || 'gsb_pink',
-          bankLogoDataUrl: config.bankLogoDataUrl || '',
-          landingTitle1: config.landingTitle1 || '',
-          landingTitle2: config.landingTitle2 || '',
-          landingLocation1: config.landingLocation1 || '',
-          landingLocation2: config.landingLocation2 || '',
-          landingDate: config.landingDate || '',
-          landingBgGradient: config.landingBgGradient || 'gsb_pink',
+          landingBgImageUrl: config.landingBgImageUrl || '',
+          landingExpireDays: config.landingExpireDays !== undefined ? Number(config.landingExpireDays) : 5,
           driveFolderId: config.driveFolderId,
           driveFolderUrl: config.driveFolderUrl,
           driveAuthMode: getDriveAuthMode(config),
@@ -1151,6 +1163,90 @@ function createAppServer(options = {}) {
         });
       }
 
+      // Helper: Find borderline similar clusters ("อาจเป็นคนเดียวกัน ใช่หรือไม่?")
+      const findSimilarClustersByVector = (rawVec, excludeClusterIds = new Set(), alreadyMatchedPhotoIds = null) => {
+        const vec = normalizeVector(rawVec);
+        if (!vec.length) return [];
+        const candidates = [];
+        for (const c of db.clusters) {
+          if (excludeClusterIds.has(c.id) || !Array.isArray(c.centroid) || c.centroid.length !== vec.length) continue;
+          if (alreadyMatchedPhotoIds && Array.isArray(c.photoIds) && c.photoIds.every((pid) => alreadyMatchedPhotoIds.has(pid))) {
+            continue;
+          }
+          const cos = cosineSimilarity(vec, c.centroid);
+          if (cos >= 0.28 && cos < 0.46) {
+            candidates.push({
+              id: c.id,
+              label: c.label,
+              avatarDataUrl: c.avatarDataUrl || '',
+              photoCount: c.photoCount,
+              photoIds: c.photoIds,
+              cosine: Number(cos.toFixed(4)),
+              similarity: Math.min(95, Math.max(60, Math.round(52 + cos * 95)))
+            });
+          }
+        }
+        candidates.sort((a, b) => b.cosine - a.cosine);
+        return candidates.slice(0, 5);
+      };
+
+      // 5a. GET /api/clusters/:id/similar
+      const similarClusterMatch = pathname.match(/^\/api\/clusters\/([a-zA-Z0-9_-]+)\/similar$/);
+      if (method === 'GET' && similarClusterMatch) {
+        const cluster = db.clusters.find((c) => c.id === similarClusterMatch[1]);
+        if (!cluster) {
+          return sendJson(res, 404, { ok: false, error: 'ไม่พบกลุ่มใบหน้านี้' });
+        }
+        const similar = findSimilarClustersByVector(cluster.centroid, new Set([cluster.id]));
+        return sendJson(res, 200, { ok: true, clusterId: cluster.id, similar });
+      }
+
+      // 5b. POST /api/clusters/merge (Admin permanent merge of two clusters)
+      if (method === 'POST' && pathname === '/api/clusters/merge') {
+        if (!isAdminAuthorized(req)) {
+          return sendJson(res, 403, { ok: false, error: 'เฉพาะผู้ดูแลระบบเท่านั้นที่รวมกลุ่มถาวรได้' });
+        }
+        const body = await readJsonBody(req);
+        const targetId = String(body.targetClusterId || '').trim();
+        const sourceId = String(body.sourceClusterId || '').trim();
+        const target = db.clusters.find((c) => c.id === targetId);
+        const source = db.clusters.find((c) => c.id === sourceId);
+        if (!target || !source || targetId === sourceId) {
+          return sendJson(res, 400, { ok: false, error: 'ข้อมูลกลุ่มใบหน้าที่ต้องการรวมไม่ถูกต้อง' });
+        }
+
+        const mergedPhotoSet = new Set([...(target.photoIds || []), ...(source.photoIds || [])]);
+        target.photoIds = Array.from(mergedPhotoSet);
+        target.photoCount = target.photoIds.length;
+        target.faceCount = (target.faceCount || 0) + (source.faceCount || 0);
+
+        // Blend centroids weighted by faceCount for better future clustering
+        if (Array.isArray(target.centroid) && Array.isArray(source.centroid) && target.centroid.length === source.centroid.length) {
+          const w1 = Math.max(1, (target.faceCount - (source.faceCount || 1)));
+          const w2 = Math.max(1, source.faceCount || 1);
+          target.centroid = normalizeVector(target.centroid.map((v, i) => v * w1 + source.centroid[i] * w2));
+        }
+
+        for (const p of db.photos) {
+          if (Array.isArray(p.faces)) {
+            for (const f of p.faces) {
+              if (f.clusterId === sourceId) f.clusterId = targetId;
+            }
+          }
+          if (Array.isArray(p.clusterIds) && p.clusterIds.includes(sourceId)) {
+            p.clusterIds = Array.from(new Set(p.clusterIds.map((cid) => (cid === sourceId ? targetId : cid))));
+          }
+        }
+        db.clusters = db.clusters.filter((c) => c.id !== sourceId);
+        saveDb();
+        return sendJson(res, 200, {
+          ok: true,
+          targetCluster: buildPublicClusterView(target),
+          clusters: db.clusters.map(buildPublicClusterView),
+          stats: getStats()
+        });
+      }
+
       // 5. PATCH /api/clusters/:id
       const clusterMatch = pathname.match(/^\/api\/clusters\/([a-zA-Z0-9_-]+)$/);
       if (method === 'PATCH' && clusterMatch) {
@@ -1261,12 +1357,16 @@ function createAppServer(options = {}) {
             })
             .filter(Boolean);
 
+          const matchedIdSet = new Set(results.map((r) => r.id));
+          const similarClusters = findSimilarClustersByVector(queryVectors[0], new Set(), matchedIdSet);
+
           return sendJson(res, 200, {
             ok: true,
             engineUsed: 'arcface_512d',
             threshold,
             expandedCount,
             queryFaceAvatarUrl,
+            similarClusters,
             geminiError: (engineMode === 'arcface_gemini' && !hasGeminiKey)
               ? 'ยังไม่ได้บันทึก Gemini API Key (แสดงผลด้วย ArcFace 512-D)'
               : '',
@@ -1390,6 +1490,8 @@ function createAppServer(options = {}) {
         }
 
         finalResults.sort((a, b) => (b.matchSimilarity || 0) - (a.matchSimilarity || 0));
+        const finalMatchedIds = new Set(finalResults.map((r) => r.id));
+        const similarClusters = findSimilarClustersByVector(queryVectors[0], new Set(), finalMatchedIds);
 
         return sendJson(res, 200, {
           ok: true,
@@ -1397,6 +1499,7 @@ function createAppServer(options = {}) {
           threshold,
           expandedCount,
           queryFaceAvatarUrl,
+          similarClusters,
           geminiUsed,
           geminiModel: geminiModelUsed,
           geminiError,

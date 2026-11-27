@@ -45,7 +45,8 @@ async function apiTests() {
     assert.ok(html.includes('viewLanding') && html.includes('inputLandingBgGradient'), 'Landing page and gradient selector exist');
     assert.ok(html.includes('btnToggleFaceBoxes') && html.includes('ดูภาพขนาดเต็ม (Google Drive)'), 'Lightbox face box toggle and Drive button label updated');
     assert.ok(html.includes('btnLightboxPrev') && html.includes('btnLightboxNext'), 'Lightbox left/right navigation exists');
-    assert.ok(html.includes('btnOpenAddFriendModal') && html.includes('addFriendModal') && html.includes('ถ่ายภาพใบหน้า') && html.includes('ใช้ภาพที่มีอยู่'), 'Add Friend modal and paired search buttons exist');
+    assert.ok(!html.includes('btnOpenAddFriendModal') && html.includes('addFriendModal') && html.includes('ถ่ายภาพใบหน้า') && html.includes('ใช้ภาพที่มีอยู่'), 'Redundant Add Friend button removed, modal and paired search buttons exist');
+    assert.ok(html.includes('similarFacesBox') && html.includes('appDialogModal') && html.includes('inputLandingBgFile') && html.includes('inputLandingExpireDays'), 'Similar faces suggestion, styled dialog, landing bg & expire days exist');
     assert.ok(html.includes('cfgTabBtnDecor') && html.includes('cfgTabBtnAdmin') && html.includes('landingPhotoCountSpan') && html.includes('btnDeletePhotoAdmin'), '2-tab settings, landing photo count, and admin delete exist');
     assert.ok(html.includes('lightboxFaceLayer'), 'Tap-a-Face layer exists');
     console.log('  ✅ 1. UI: version 1.026112026, Mobile/Desktop toggle, Admin Login, LINE Share, Event Logo');
@@ -68,7 +69,9 @@ async function apiTests() {
       eventLogoDataUrl: SAMPLE_JPEG_BASE64,
       bankLogoDataUrl: SAMPLE_JPEG_BASE64,
       landingTitle1: 'งานสัมมนา RM6',
-      landingBgGradient: 'sunset_rose'
+      landingBgGradient: 'sunset_rose',
+      landingBgImageUrl: SAMPLE_JPEG_BASE64,
+      landingExpireDays: 7
     });
     assert.equal(cfg.driveFolderId, '1PinkAlbumSharedFolderId123456');
     assert.equal(cfg.searchEngineMode, 'arcface_gemini');
@@ -76,6 +79,8 @@ async function apiTests() {
     assert.equal(cfg.bankLogoDataUrl, SAMPLE_JPEG_BASE64);
     assert.equal(cfg.landingTitle1, 'งานสัมมนา RM6');
     assert.equal(cfg.landingBgGradient, 'sunset_rose');
+    assert.ok(cfg.landingBgImageUrl.startsWith('/api/avatars/landing_bg_'), 'Landing BG image saved to disk');
+    assert.equal(cfg.landingExpireDays, 7);
     await postAuth('/api/config', { searchEngineMode: 'arcface' });
     console.log('  ✅ 2. Config: Auth required, Drive folder ID, engine mode & logo saved');
 
@@ -118,7 +123,13 @@ async function apiTests() {
     })).json();
     assert.equal(binUp.ok, true);
     assert.ok(binUp.photo.previewUrl.includes('/preview'));
-    console.log('  ✅ 3. 512-D clustering, disk avatars, pagination, ETag 304 & binary upload verified');
+    const simResp = await (await fetch(`${base}/api/clusters/${up.clusters[0].id}/similar`)).json();
+    assert.equal(simResp.ok, true);
+    assert.ok(Array.isArray(simResp.similar));
+
+    const unauthMerge = await post('/api/clusters/merge', { targetClusterId: up.clusters[0].id, sourceClusterId: up.clusters[1].id });
+    assert.equal(unauthMerge.ok, false);
+    console.log('  ✅ 3. 512-D clustering, disk avatars, pagination, similar-faces API, ETag 304 & binary upload verified');
 
     // 4. Search by descriptor (ArcFace cosine)
     const s = await post('/api/faces/search', { descriptors: [unitVec(10, 0.08)], threshold: 0.40, engineMode: 'arcface' });

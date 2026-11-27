@@ -74,7 +74,7 @@
           🔍 ค้นหารูปภาพ
         </button>
         <button class="btn btn-soft landing-btn-sub" id="btnLandingUpload" type="button">
-          📤 อัปโหลดรูป (ตากล้อง) • <span id="landingPhotoCountSpan">0</span> รูป
+          📤 อัปโหลดรูป - มี <span id="landingPhotoCountSpan">0</span> รูป ในอัลบั้ม 📸
         </button>
       </div>
 
@@ -84,8 +84,12 @@
           <li>กด <b>ค้นหารูปภาพ</b> แล้วถ่ายเซลฟีหรือเลือกรูปหน้าของคุณ</li>
           <li>ระบบ AI จะค้นหารูปทั้งหมดที่มีคุณในงานขึ้นมาให้ทันที</li>
           <li>กดแชร์ส่งต่อให้เพื่อนทาง LINE หรือดาวน์โหลดเก็บเป็นไฟล์ ZIP</li>
-          <li>โปรด <b>Download รูปภาพ</b> ลงอุปกรณ์ของท่านภายใน 5 วัน</li>
+          <li id="landingGuideExpireStep">โปรด <b>Download รูปภาพ</b> ลงอุปกรณ์ของท่านภายใน <span id="landingGuideDaysSpan">5</span> วัน</li>
         </ol>
+      </div>
+
+      <div class="landing-expire-notice" id="landingExpireBanner">
+        ⏳ เหลือเวลาดาวน์โหลดอีก <strong id="landingExpireDaysBadge">5</strong> วัน ก่อนลบภาพออกจากระบบ
       </div>
     </section>
 
@@ -165,10 +169,14 @@
               <div class="active-search-sub" id="activeFilterSub"></div>
             </div>
           </div>
+
+          <!-- Similar Face Suggestions ("อาจเป็นคนเดียวกัน ใช่หรือไม่?") -->
+          <div class="similar-faces-box" id="similarFacesBox" hidden>
+            <div class="similar-faces-title">🤔 พบใบหน้าที่คล้ายกัน อาจเป็นคนเดียวกัน ใช่หรือไม่?</div>
+            <div class="similar-faces-list" id="similarFacesList"></div>
+          </div>
+
           <div style="display: flex; gap: 8px; flex-wrap: wrap; justify-content: center;">
-            <button class="btn btn-soft" id="btnOpenAddFriendModal" type="button">
-              ➕ เพิ่มเพื่อนร่วมรูป (สูงสุด 3 คน)
-            </button>
             <button class="btn btn-danger-soft" id="btnClearSearchBanner" type="button">
               ✕ ดูรูปทั้งหมด
             </button>
@@ -326,7 +334,18 @@
             </div>
           </div>
           <div class="form-group">
-            <label for="inputLandingBgGradient">สีพื้นหลังหน้าหลัก (Gradient)</label>
+            <label for="inputLandingBgFile">ภาพพื้นหลังหน้าหลัก (ถ้าอัปโหลดจะแสดงแทนสี Gradient)</label>
+            <div style="font-size: 0.76rem; color: var(--text-muted); margin-bottom: 6px;">
+              💡 แนะนำขนาดภาพ: <b>1080 × 1920 px</b> (แนวตั้งสำหรับมือถือ) หรือ <b>1200 × 1600 px</b> (ไฟล์ JPG/PNG)
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+              <img id="landingBgPreview" src="" alt="BG Preview" style="width: 48px; height: 64px; border-radius: 8px; object-fit: cover; border: 1px solid var(--border);" hidden />
+              <input type="file" id="inputLandingBgFile" accept="image/*" style="flex: 1; min-width: 180px;" />
+              <button class="btn btn-ghost" id="btnClearLandingBg" type="button" style="padding: 5px 10px; font-size: 0.78rem;">ล้างภาพพื้นหลัง</button>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="inputLandingBgGradient">สีพื้นหลังหน้าหลัก (Gradient เมื่อไม่ได้ใส่ภาพพื้นหลัง)</label>
             <select id="inputLandingBgGradient">
               <option value="gsb_pink">🌸 ชมพูออมสินนุ่มนวล (GSB Pink)</option>
               <option value="pink_vibrant">💖 ชมพูไล่เฉดสดใส (Vibrant Pink)</option>
@@ -355,6 +374,10 @@
           <div class="form-group">
             <label for="inputLandingDate">วันที่จัดงาน</label>
             <input type="text" id="inputLandingDate" placeholder="เช่น 26 พฤศจิกายน 2569" />
+          </div>
+          <div class="form-group">
+            <label for="inputLandingExpireDays">แจ้งเตือนจำนวนวันที่เหลือให้ดาวน์โหลดก่อนลบภาพ (ใส่ 0 เพื่อซ่อน)</label>
+            <input type="number" id="inputLandingExpireDays" min="0" max="365" value="5" placeholder="เช่น 5" />
           </div>
         </div>
 
@@ -541,5 +564,19 @@
       </div>
     </div>
   </div>
+
+  <!-- Modal 6: Styled Alert / Confirm Dialog & Toast Container -->
+  <div class="modal-backdrop" id="appDialogModal" hidden style="z-index: 220;">
+    <div class="modal-box app-dialog-box">
+      <div class="app-dialog-icon" id="appDialogIcon">✨</div>
+      <h3 class="app-dialog-title" id="appDialogTitle">แจ้งเตือน</h3>
+      <p class="app-dialog-msg" id="appDialogMsg"></p>
+      <div class="app-dialog-actions">
+        <button class="btn btn-ghost" id="btnAppDialogCancel" type="button" hidden>ยกเลิก</button>
+        <button class="btn btn-primary" id="btnAppDialogOk" type="button">ตกลง</button>
+      </div>
+    </div>
+  </div>
+  <div class="app-toast-wrap" id="appToastWrap" aria-live="polite"></div>
 </body>
 </html>
