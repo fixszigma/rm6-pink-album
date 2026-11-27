@@ -3,6 +3,7 @@ node_modules/
 storage/
 models/
 data/index.json
+data/*.tmp
 data/config.json
 rm6-pink-album-*.json
 client_secret_*.json

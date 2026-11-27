@@ -8,6 +8,7 @@ const fsp = require('node:fs/promises');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const os = require('node:os');
+const zlib = require('node:zlib');
 
 const { createZipBuffer } = require('./lib/zip');
 const { ArcFaceService } = require('./lib/arcface-client');
@@ -108,6 +109,8 @@ function createAppServer(options = {}) {
   const storageDir = options.storageDir || path.join(rootDir, 'storage');
   const originalsDir = path.join(storageDir, 'originals');
   const thumbsDir = path.join(storageDir, 'thumbs');
+  const previewsDir = path.join(storageDir, 'previews');
+  const avatarsDir = path.join(storageDir, 'avatars');
   const publicDir = path.join(rootDir, 'public');
 
   const configPath = path.join(dataDir, 'config.json');
@@ -116,6 +119,8 @@ function createAppServer(options = {}) {
   fs.mkdirSync(dataDir, { recursive: true });
   fs.mkdirSync(originalsDir, { recursive: true });
   fs.mkdirSync(thumbsDir, { recursive: true });
+  fs.mkdirSync(previewsDir, { recursive: true });
+  fs.mkdirSync(avatarsDir, { recursive: true });
 
   const arcFaceService = new ArcFaceService(rootDir);
   if (!options.disableArcFaceAutoStart && arcFaceService.hasModelsOnDisk()) {
@@ -193,12 +198,69 @@ function createAppServer(options = {}) {
     updatedAt: new Date().toISOString()
   };
 
+  function persistFaceAvatarSync(photoId, faceIdx, rawAvatar) {
+    if (!rawAvatar || typeof rawAvatar !== 'string') return '';
+    if (rawAvatar.startsWith('/api/avatars/')) return rawAvatar;
+    if (!rawAvatar.startsWith('data:image/')) return rawAvatar;
+    const buf = decodeBase64Data(rawAvatar);
+    if (!buf || !buf.length) return '';
+    const fileName = `${photoId}_f${faceIdx}.jpg`;
+    const fullPath = path.join(avatarsDir, fileName);
+    fs.writeFileSync(fullPath, buf);
+    return `/api/avatars/${fileName}`;
+  }
+
+  async function persistFaceAvatarAsync(photoId, faceIdx, rawAvatar) {
+    if (!rawAvatar || typeof rawAvatar !== 'string') return '';
+    if (rawAvatar.startsWith('/api/avatars/')) return rawAvatar;
+    if (!rawAvatar.startsWith('data:image/')) return rawAvatar;
+    const buf = decodeBase64Data(rawAvatar);
+    if (!buf || !buf.length) return '';
+    const fileName = `${photoId}_f${faceIdx}.jpg`;
+    const fullPath = path.join(avatarsDir, fileName);
+    await fsp.writeFile(fullPath, buf);
+    return `/api/avatars/${fileName}`;
+  }
+
+  async function loadAvatarBufferFromUrl(avatarUrl) {
+    if (!avatarUrl || typeof avatarUrl !== 'string') return null;
+    if (avatarUrl.startsWith('/api/avatars/')) {
+      const safeName = path.basename(avatarUrl);
+      const p = path.join(avatarsDir, safeName);
+      if (fs.existsSync(p)) return fsp.readFile(p);
+      return null;
+    }
+    if (avatarUrl.startsWith('data:image/')) {
+      return decodeBase64Data(avatarUrl);
+    }
+    return null;
+  }
+
   if (fs.existsSync(indexPath)) {
     try {
       const savedDb = JSON.parse(fs.readFileSync(indexPath, 'utf8'));
       db.photos = Array.isArray(savedDb.photos) ? savedDb.photos : [];
       db.clusters = Array.isArray(savedDb.clusters) ? savedDb.clusters : [];
+      let migratedCount = 0;
+      for (const p of db.photos) {
+        if (Array.isArray(p.faces)) {
+          for (let fi = 0; fi < p.faces.length; fi++) {
+            const f = p.faces[fi];
+            if (f && typeof f.avatarDataUrl === 'string' && f.avatarDataUrl.startsWith('data:image/')) {
+              f.avatarDataUrl = persistFaceAvatarSync(p.id, fi, f.avatarDataUrl);
+              migratedCount++;
+            }
+          }
+        }
+      }
       db.clusters = recomputeClusters(db.photos, db.clusters, config.clusterThreshold || DEFAULT_CLUSTER_COSINE);
+      if (migratedCount > 0) {
+        db.updatedAt = new Date().toISOString();
+        const tmp = `${indexPath}.tmp`;
+        fs.writeFileSync(tmp, JSON.stringify(db), 'utf8');
+        fs.renameSync(tmp, indexPath);
+        console.log(`⚡ Migrated ${migratedCount} Base64 face avatars to storage/avatars/ and compacted index.json`);
+      }
     } catch {
       // keep empty db
     }
@@ -208,18 +270,153 @@ function createAppServer(options = {}) {
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
   }
 
+  let saveTimer = null;
+  let reclusterTimer = null;
+
   function saveDb() {
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
     db.updatedAt = new Date().toISOString();
-    fs.writeFileSync(indexPath, JSON.stringify(db, null, 2), 'utf8');
+    const tmp = `${indexPath}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(db), 'utf8');
+    fs.renameSync(tmp, indexPath);
   }
 
+  function scheduleReclusterAndSave(delayMs = 600) {
+    if (reclusterTimer) clearTimeout(reclusterTimer);
+    reclusterTimer = setTimeout(() => {
+      reclusterTimer = null;
+      db.clusters = recomputeClusters(db.photos, db.clusters, config.clusterThreshold || DEFAULT_CLUSTER_COSINE);
+      db.updatedAt = new Date().toISOString();
+      const tmp = `${indexPath}.${process.pid}.tmp`;
+      fsp.writeFile(tmp, JSON.stringify(db), 'utf8')
+        .then(() => fsp.rename(tmp, indexPath))
+        .catch(() => {});
+    }, delayMs);
+  }
+
+  // Background Google Drive Upload Queue (2 concurrent workers so uploads never block photographers!)
+  const driveQueue = [];
+  let activeDriveWorkers = 0;
+  const MAX_DRIVE_CONCURRENCY = 2;
+
+  function pumpDriveQueue() {
+    while (activeDriveWorkers < MAX_DRIVE_CONCURRENCY && driveQueue.length > 0) {
+      const photo = driveQueue.shift();
+      if (!photo || photo.driveSynced) continue;
+      const folderId = config.driveFolderId || parseDriveFolderId(config.driveFolderUrl);
+      if (!folderId) continue;
+
+      activeDriveWorkers++;
+      (async () => {
+        try {
+          const origPath = path.join(originalsDir, photo.origFileName || '');
+          if (!fs.existsSync(origPath)) return;
+          const buf = await fsp.readFile(origPath);
+          const driveRes = await uploadFileToDrive(config, {
+            fileName: photo.name,
+            mimeType: photo.mimeType,
+            buffer: buf
+          });
+          if (driveRes && driveRes.synced) {
+            photo.driveFileId = driveRes.driveFileId || '';
+            photo.driveSynced = true;
+            photo.driveSyncNote = '';
+            photo.webViewLink = driveRes.webViewLink || '';
+            scheduleReclusterAndSave(1200);
+          } else if (driveRes && driveRes.reason) {
+            photo.driveSyncNote = driveRes.reason;
+          }
+        } catch (err) {
+          photo.driveSyncNote = err.message || 'Drive background upload error';
+        } finally {
+          activeDriveWorkers--;
+          pumpDriveQueue();
+        }
+      })();
+    }
+  }
+
+  function enqueueDriveUpload(photo) {
+    const folderId = config.driveFolderId || parseDriveFolderId(config.driveFolderUrl);
+    if (!folderId || photo.driveSynced) return;
+    driveQueue.push(photo);
+    pumpDriveQueue();
+  }
+
+  let currentAcceptEncoding = '';
+
   function sendJson(res, statusCode, payload) {
-    const body = JSON.stringify(payload);
-    res.writeHead(statusCode, {
+    const raw = Buffer.from(JSON.stringify(payload), 'utf8');
+    const headers = {
       'Content-Type': 'application/json; charset=utf-8',
       'Cache-Control': 'no-store'
+    };
+    if (raw.length > 1024 && currentAcceptEncoding.includes('gzip')) {
+      const gz = zlib.gzipSync(raw, { level: zlib.constants.Z_BEST_SPEED });
+      headers['Content-Encoding'] = 'gzip';
+      headers['Content-Length'] = String(gz.length);
+      res.writeHead(statusCode, headers);
+      res.end(gz);
+      return;
+    }
+    headers['Content-Length'] = String(raw.length);
+    res.writeHead(statusCode, headers);
+    res.end(raw);
+  }
+
+  function readRawBody(req, maxBytes = 55 * 1024 * 1024) {
+    return new Promise((resolve, reject) => {
+      const chunks = [];
+      let total = 0;
+      req.on('data', (chunk) => {
+        total += chunk.length;
+        if (total > maxBytes) {
+          reject(new Error('ขนาดไฟล์เกินกำหนด (สูงสุด ~55MB ต่อรูป)'));
+          req.destroy();
+          return;
+        }
+        chunks.push(chunk);
+      });
+      req.on('end', () => resolve(Buffer.concat(chunks)));
+      req.on('error', reject);
     });
-    res.end(body);
+  }
+
+  function streamFileWithCache(req, res, filePath, contentType, { cacheControl = 'public, max-age=604800, immutable', downloadName = '' } = {}) {
+    let stat;
+    try {
+      stat = fs.statSync(filePath);
+      if (!stat.isFile()) return false;
+    } catch {
+      return false;
+    }
+    const etag = `W/"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}"`;
+    if (!downloadName && req.headers['if-none-match'] === etag) {
+      res.writeHead(304, { ETag: etag, 'Cache-Control': cacheControl });
+      res.end();
+      return true;
+    }
+    const headers = {
+      'Content-Type': contentType,
+      'Content-Length': String(stat.size),
+      'Cache-Control': cacheControl,
+      ETag: etag
+    };
+    if (downloadName) {
+      const encodedName = encodeURIComponent(downloadName);
+      headers['Content-Disposition'] = `attachment; filename*=UTF-8''${encodedName}`;
+    }
+    res.writeHead(200, headers);
+    const stream = fs.createReadStream(filePath);
+    stream.on('error', () => {
+      if (!res.headersSent) res.writeHead(500);
+      res.end();
+    });
+    stream.pipe(res);
+    return true;
   }
 
   function readJsonBody(req, maxBytes = 65 * 1024 * 1024) {
@@ -247,8 +444,8 @@ function createAppServer(options = {}) {
     });
   }
 
-  function buildPublicPhotoView(photo) {
-    return {
+  function buildPublicPhotoView(photo, opts = {}) {
+    const view = {
       id: photo.id,
       name: photo.name,
       mimeType: photo.mimeType,
@@ -262,21 +459,25 @@ function createAppServer(options = {}) {
       driveSyncNote: photo.driveSyncNote || '',
       webViewLink: photo.webViewLink || (photo.driveFileId ? `https://drive.google.com/file/d/${photo.driveFileId}/view` : ''),
       thumbUrl: `/api/photos/${photo.id}/thumb`,
+      previewUrl: `/api/photos/${photo.id}/preview`,
       fileUrl: `/api/photos/${photo.id}/file`,
       downloadUrl: `/api/photos/${photo.id}/file?download=1`,
       faceIndexed: Boolean(photo.faceIndexed),
       needsFaceIndex: !photo.faceIndexed,
       faceCount: Array.isArray(photo.faces) ? photo.faces.length : 0,
-      clusterIds: Array.isArray(photo.clusterIds) ? photo.clusterIds : [],
-      faces: (photo.faces || []).map((f, idx) => ({
+      clusterIds: Array.isArray(photo.clusterIds) ? photo.clusterIds : []
+    };
+    if (opts.includeFaces) {
+      view.faces = (photo.faces || []).map((f, idx) => ({
         index: idx,
         box: f.box || null,
         detScore: f.detScore || 0,
         clusterEligible: f.clusterEligible !== false,
         clusterId: f.clusterId || null,
         avatarDataUrl: f.avatarDataUrl || ''
-      }))
-    };
+      }));
+    }
+    return view;
   }
 
   function buildPublicClusterView(cluster) {
@@ -344,11 +545,14 @@ function createAppServer(options = {}) {
       const origPath = path.join(originalsDir, p.origFileName || '');
       if (p.origFileName && fs.existsSync(origPath)) {
         const thumbFileName = p.thumbFileName || `${p.id}_thumb.jpg`;
+        const previewFileName = p.previewFileName || `${p.id}_preview.jpg`;
         p.thumbFileName = thumbFileName;
+        p.previewFileName = previewFileName;
         batchItems.push({
           id: p.id,
           imagePath: origPath,
-          saveThumbPath: path.join(thumbsDir, thumbFileName)
+          saveThumbPath: path.join(thumbsDir, thumbFileName),
+          savePreviewPath: path.join(previewsDir, previewFileName)
         });
       }
     }
@@ -369,14 +573,21 @@ function createAppServer(options = {}) {
         if (!photo || !r) continue;
         photo.width = r.width || photo.width;
         photo.height = r.height || photo.height;
-        photo.faces = (r.faces || []).map((f) => ({
-          descriptor: normalizeVector(f.descriptor),
-          box: f.box,
-          detScore: f.detScore,
-          blurScore: f.blurScore,
-          clusterEligible: f.clusterEligible !== false,
-          avatarDataUrl: f.avatarDataUrl || ''
-        }));
+        const nextFaces = [];
+        const rawFaces = r.faces || [];
+        for (let fi = 0; fi < rawFaces.length; fi++) {
+          const f = rawFaces[fi];
+          const avatarUrl = await persistFaceAvatarAsync(photo.id, fi, f.avatarDataUrl || '');
+          nextFaces.push({
+            descriptor: normalizeVector(f.descriptor),
+            box: f.box,
+            detScore: f.detScore,
+            blurScore: f.blurScore,
+            clusterEligible: f.clusterEligible !== false,
+            avatarDataUrl: avatarUrl
+          });
+        }
+        photo.faces = nextFaces;
         photo.faceIndexed = true;
         photo.engineVersion = 'arcface_512d';
         indexedCount++;
@@ -391,6 +602,7 @@ function createAppServer(options = {}) {
 
   const server = http.createServer(async (req, res) => {
     try {
+      currentAcceptEncoding = String(req.headers['accept-encoding'] || '');
       const reqUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
       const pathname = reqUrl.pathname;
       const method = req.method.toUpperCase();
@@ -639,18 +851,51 @@ function createAppServer(options = {}) {
         }
       }
 
-      // 3. GET /api/photos
+      // 3. GET /api/photos (supports ?limit=40&offset=0&clusterId=...&clusterLimit=40)
       if (method === 'GET' && pathname === '/api/photos') {
         const clusterFilter = reqUrl.searchParams.get('clusterId') || '';
+        const limitParam = Number(reqUrl.searchParams.get('limit') || 0);
+        const offsetParam = Math.max(0, Number(reqUrl.searchParams.get('offset') || 0) || 0);
+        const clusterLimitParam = Number(reqUrl.searchParams.get('clusterLimit') || 0);
+
         let list = db.photos;
         if (clusterFilter) {
           list = list.filter((p) => Array.isArray(p.clusterIds) && p.clusterIds.includes(clusterFilter));
         }
+
+        const totalFiltered = list.length;
+        const pageList = limitParam > 0 ? list.slice(offsetParam, offsetParam + limitParam) : list;
+        const clusterSlice = clusterLimitParam > 0 ? db.clusters.slice(0, clusterLimitParam) : db.clusters;
+
         return sendJson(res, 200, {
           ok: true,
-          photos: list.map(buildPublicPhotoView),
-          clusters: db.clusters.map(buildPublicClusterView),
+          photos: pageList.map((p) => buildPublicPhotoView(p, { includeFaces: false })),
+          totalFiltered,
+          hasMore: limitParam > 0 ? (offsetParam + pageList.length < totalFiltered) : false,
+          clusters: clusterSlice.map(buildPublicClusterView),
+          totalClusters: db.clusters.length,
           stats: getStats()
+        });
+      }
+
+      // 3a. GET /api/photos/:id/faces (Lazy-loaded only when Lightbox opens a photo)
+      const photoFacesMatch = pathname.match(/^\/api\/photos\/([a-zA-Z0-9_-]+)\/faces$/);
+      if (method === 'GET' && photoFacesMatch) {
+        const photo = db.photos.find((p) => p.id === photoFacesMatch[1]);
+        if (!photo) {
+          return sendJson(res, 404, { ok: false, error: 'ไม่พบรูปภาพนี้' });
+        }
+        return sendJson(res, 200, {
+          ok: true,
+          width: photo.width || 0,
+          height: photo.height || 0,
+          faces: (photo.faces || []).map((f, idx) => ({
+            index: idx,
+            box: f.box || null,
+            detScore: f.detScore || 0,
+            clusterId: f.clusterId || null,
+            avatarDataUrl: f.avatarDataUrl || ''
+          }))
         });
       }
 
@@ -683,7 +928,114 @@ function createAppServer(options = {}) {
         });
       }
 
-      // 4. POST /api/photos/upload (Server-Side SCRFD + ArcFace 512-D Indexing!)
+      // 4a. POST /api/photos/upload-binary (Zero-Base64 High-Speed Parallel Upload + Background Drive Queue)
+      if (method === 'POST' && pathname === '/api/photos/upload-binary') {
+        const origBuf = await readRawBody(req);
+        if (!origBuf || !origBuf.length) {
+          return sendJson(res, 400, { ok: false, error: 'ไม่มีข้อมูลไฟล์รูปภาพ' });
+        }
+
+        const id = `ph_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+        const rawName = String(reqUrl.searchParams.get('name') || `${id}.jpg`).trim();
+        const mimeType = String(reqUrl.searchParams.get('mimeType') || req.headers['content-type'] || 'image/jpeg');
+        const source = String(reqUrl.searchParams.get('source') || 'web_upload_binary');
+        const deferCluster = reqUrl.searchParams.get('deferCluster') === '1';
+        const ext = extFromMimeOrName(mimeType, rawName);
+
+        const origFileName = `${id}${ext}`;
+        const thumbFileName = `${id}_thumb.jpg`;
+        const previewFileName = `${id}_preview.jpg`;
+        const origFullPath = path.join(originalsDir, origFileName);
+        const thumbFullPath = path.join(thumbsDir, thumbFileName);
+        const previewFullPath = path.join(previewsDir, previewFileName);
+
+        await fsp.writeFile(origFullPath, origBuf);
+
+        let normalizedFaces = [];
+        let width = Number(reqUrl.searchParams.get('width')) || 0;
+        let height = Number(reqUrl.searchParams.get('height')) || 0;
+        let faceIndexed = false;
+        const useServerArcFace = !options.disableArcFaceAutoStart && arcFaceService.hasModelsOnDisk();
+
+        if (useServerArcFace) {
+          const analyzed = await arcFaceService.analyzeImage({
+            imagePath: origFullPath,
+            saveThumbPath: thumbFullPath,
+            savePreviewPath: previewFullPath,
+            scoreThresh: 0.45,
+            flipAugment: true
+          });
+          width = analyzed.width || width;
+          height = analyzed.height || height;
+          const rawFaces = analyzed.faces || [];
+          for (let fi = 0; fi < rawFaces.length; fi++) {
+            const f = rawFaces[fi];
+            const avatarUrl = await persistFaceAvatarAsync(id, fi, f.avatarDataUrl || '');
+            normalizedFaces.push({
+              descriptor: normalizeVector(f.descriptor),
+              box: f.box,
+              detScore: f.detScore,
+              blurScore: f.blurScore,
+              clusterEligible: f.clusterEligible !== false,
+              avatarDataUrl: avatarUrl
+            });
+          }
+          faceIndexed = true;
+        } else {
+          await fsp.writeFile(thumbFullPath, origBuf);
+        }
+
+        const photoRecord = {
+          id,
+          name: rawName,
+          mimeType,
+          size: origBuf.length,
+          width,
+          height,
+          source,
+          createdAt: new Date().toISOString(),
+          origFileName,
+          thumbFileName,
+          previewFileName,
+          driveFileId: '',
+          driveSynced: false,
+          driveSyncNote: 'รอซิงก์ขึ้น Google Drive เบื้องหลัง',
+          webViewLink: '',
+          faceIndexed,
+          engineVersion: useServerArcFace ? 'arcface_512d' : 'custom',
+          faces: normalizedFaces,
+          clusterIds: []
+        };
+
+        db.photos.unshift(photoRecord);
+        enqueueDriveUpload(photoRecord);
+
+        if (deferCluster) {
+          scheduleReclusterAndSave(800);
+        } else {
+          db.clusters = recomputeClusters(db.photos, db.clusters, config.clusterThreshold || DEFAULT_CLUSTER_COSINE);
+          saveDb();
+        }
+
+        return sendJson(res, 200, {
+          ok: true,
+          photo: buildPublicPhotoView(photoRecord),
+          driveQueued: Boolean(config.driveFolderId || parseDriveFolderId(config.driveFolderUrl))
+        });
+      }
+
+      if (method === 'POST' && pathname === '/api/photos/recluster') {
+        db.clusters = recomputeClusters(db.photos, db.clusters, config.clusterThreshold || DEFAULT_CLUSTER_COSINE);
+        saveDb();
+        return sendJson(res, 200, {
+          ok: true,
+          clusters: db.clusters.slice(0, 60).map(buildPublicClusterView),
+          totalClusters: db.clusters.length,
+          stats: getStats()
+        });
+      }
+
+      // 4. POST /api/photos/upload (JSON Base64 Compatible + Background Drive Queue + Avatar Files)
       if (method === 'POST' && pathname === '/api/photos/upload') {
         const body = await readJsonBody(req);
         const files = Array.isArray(body.files) ? body.files : [];
@@ -706,17 +1058,13 @@ function createAppServer(options = {}) {
 
           const origFileName = `${id}${ext}`;
           const thumbFileName = `${id}_thumb.jpg`;
+          const previewFileName = `${id}_preview.jpg`;
           const origFullPath = path.join(originalsDir, origFileName);
           const thumbFullPath = path.join(thumbsDir, thumbFileName);
+          const previewFullPath = path.join(previewsDir, previewFileName);
 
           await fsp.writeFile(origFullPath, origBuf);
           await fsp.writeFile(thumbFullPath, thumbBuf);
-
-          const driveRes = await uploadFileToDrive(config, {
-            fileName: rawName,
-            mimeType,
-            buffer: origBuf
-          });
 
           let normalizedFaces = [];
           let width = Number(item.width) || 0;
@@ -727,30 +1075,40 @@ function createAppServer(options = {}) {
             const analyzed = await arcFaceService.analyzeImage({
               imagePath: origFullPath,
               saveThumbPath: item.thumbBase64 ? undefined : thumbFullPath,
+              savePreviewPath: previewFullPath,
               scoreThresh: 0.45,
               flipAugment: true
             });
             width = analyzed.width || width;
             height = analyzed.height || height;
-            normalizedFaces = (analyzed.faces || []).map((f) => ({
-              descriptor: normalizeVector(f.descriptor),
-              box: f.box,
-              detScore: f.detScore,
-              blurScore: f.blurScore,
-              clusterEligible: f.clusterEligible !== false,
-              avatarDataUrl: f.avatarDataUrl || ''
-            }));
+            const rawFaces = analyzed.faces || [];
+            for (let fi = 0; fi < rawFaces.length; fi++) {
+              const f = rawFaces[fi];
+              const avatarUrl = await persistFaceAvatarAsync(id, fi, f.avatarDataUrl || '');
+              normalizedFaces.push({
+                descriptor: normalizeVector(f.descriptor),
+                box: f.box,
+                detScore: f.detScore,
+                blurScore: f.blurScore,
+                clusterEligible: f.clusterEligible !== false,
+                avatarDataUrl: avatarUrl
+              });
+            }
             faceIndexed = true;
           } else if (Array.isArray(item.faces)) {
-            normalizedFaces = item.faces
-              .map((f) => ({
-                descriptor: normalizeVector(f.descriptor),
+            for (let fi = 0; fi < item.faces.length; fi++) {
+              const f = item.faces[fi];
+              const desc = normalizeVector(f.descriptor);
+              if (!desc.length) continue;
+              const avatarUrl = await persistFaceAvatarAsync(id, fi, f.avatarDataUrl || '');
+              normalizedFaces.push({
+                descriptor: desc,
                 box: f.box || null,
                 detScore: f.detScore || 0.9,
                 clusterEligible: f.clusterEligible !== false,
-                avatarDataUrl: f.avatarDataUrl || ''
-              }))
-              .filter((f) => f.descriptor.length > 0);
+                avatarDataUrl: avatarUrl
+              });
+            }
             faceIndexed = true;
           }
 
@@ -765,10 +1123,11 @@ function createAppServer(options = {}) {
             createdAt: new Date().toISOString(),
             origFileName,
             thumbFileName,
-            driveFileId: driveRes.driveFileId || '',
-            driveSynced: Boolean(driveRes.synced),
-            driveSyncNote: driveRes.reason || '',
-            webViewLink: driveRes.webViewLink || '',
+            previewFileName,
+            driveFileId: '',
+            driveSynced: false,
+            driveSyncNote: '',
+            webViewLink: '',
             faceIndexed,
             engineVersion: useServerArcFace ? 'arcface_512d' : 'custom',
             faces: normalizedFaces,
@@ -777,6 +1136,7 @@ function createAppServer(options = {}) {
 
           db.photos.unshift(photoRecord);
           addedPhotos.push(photoRecord);
+          enqueueDriveUpload(photoRecord);
         }
 
         db.clusters = recomputeClusters(db.photos, db.clusters, config.clusterThreshold || DEFAULT_CLUSTER_COSINE);
@@ -844,6 +1204,10 @@ function createAppServer(options = {}) {
 
         // Option B: Extract 512-D ArcFace vector(s) from uploaded Selfie / Reference image on server!
         if (!queryVectors.length && queryImageBase64 && !options.disableArcFaceAutoStart && arcFaceService.hasModelsOnDisk()) {
+          if (queryImageBase64.startsWith('/api/avatars/')) {
+            const avBuf = await loadAvatarBufferFromUrl(queryImageBase64);
+            if (avBuf) queryImageBase64 = `data:image/jpeg;base64,${avBuf.toString('base64')}`;
+          }
           const analyzed = await arcFaceService.analyzeImage({
             imageBase64: queryImageBase64,
             scoreThresh: 0.35, // slightly lower det thresh so angled/close selfies are always caught
@@ -955,19 +1319,28 @@ function createAppServer(options = {}) {
             for (const bm of borderlineMatches) {
               const p = photoMap.get(bm.photoId);
               if (!p) continue;
-              if (bm.avatarDataUrl) {
+              if (bm.avatarDataUrl && bm.avatarDataUrl.startsWith('data:')) {
                 candidatePayloads.push({ id: p.id, base64: bm.avatarDataUrl, mimeType: 'image/jpeg' });
+              } else if (bm.avatarDataUrl && bm.avatarDataUrl.startsWith('/api/avatars/')) {
+                const avBuf = await loadAvatarBufferFromUrl(bm.avatarDataUrl);
+                if (avBuf) candidatePayloads.push({ id: p.id, buffer: avBuf, mimeType: 'image/jpeg' });
               } else {
                 const buf = await loadThumbBufferForPhoto(p);
                 if (buf) candidatePayloads.push({ id: p.id, buffer: buf, mimeType: 'image/jpeg' });
               }
             }
 
-            if (candidatePayloads.length > 0) {
+            let resolvedQueryBase64 = queryFaceAvatarUrl || queryImageBase64;
+            if (resolvedQueryBase64 && resolvedQueryBase64.startsWith('/api/avatars/')) {
+              const qBuf = await loadAvatarBufferFromUrl(resolvedQueryBase64);
+              resolvedQueryBase64 = qBuf ? `data:image/jpeg;base64,${qBuf.toString('base64')}` : queryImageBase64;
+            }
+
+            if (candidatePayloads.length > 0 && resolvedQueryBase64) {
               const gemRes = await verifyFacesWithGemini({
                 apiKey: config.geminiApiKey,
                 model: config.geminiModel || DEFAULT_GEMINI_MODEL,
-                queryImageBase64: queryFaceAvatarUrl || queryImageBase64,
+                queryImageBase64: resolvedQueryBase64,
                 queryMimeType: 'image/jpeg',
                 candidates: candidatePayloads
               });
@@ -1141,8 +1514,20 @@ function createAppServer(options = {}) {
         });
       }
 
-      // 8. GET /api/photos/:id/thumb & GET /api/photos/:id/file
-      const fileRouteMatch = pathname.match(/^\/api\/photos\/([a-zA-Z0-9_-]+)\/(thumb|file)$/);
+      // 8a. GET /api/avatars/:file (Immutable Edge-Cached Face Avatars)
+      const avatarMatch = pathname.match(/^\/api\/avatars\/([a-zA-Z0-9_.-]+)$/);
+      if (method === 'GET' && avatarMatch) {
+        const safeName = path.basename(avatarMatch[1]);
+        const avPath = path.join(avatarsDir, safeName);
+        if (streamFileWithCache(req, res, avPath, 'image/jpeg')) {
+          return;
+        }
+        res.writeHead(404);
+        return res.end('Not found');
+      }
+
+      // 8. GET /api/photos/:id/(thumb|preview|file) — Streamed with ETag + Immutable Cache
+      const fileRouteMatch = pathname.match(/^\/api\/photos\/([a-zA-Z0-9_-]+)\/(thumb|preview|file)$/);
       if (method === 'GET' && fileRouteMatch) {
         const photoId = fileRouteMatch[1];
         const kind = fileRouteMatch[2];
@@ -1152,40 +1537,47 @@ function createAppServer(options = {}) {
           return res.end('Not found');
         }
 
-        const targetPath = kind === 'thumb'
-          ? path.join(thumbsDir, photo.thumbFileName || photo.origFileName)
-          : path.join(originalsDir, photo.origFileName);
+        const origPath = path.join(originalsDir, photo.origFileName || '');
+        const thumbPath = path.join(thumbsDir, photo.thumbFileName || photo.origFileName || '');
+        const previewFileName = photo.previewFileName || `${photo.id}_preview.jpg`;
+        const previewPath = path.join(previewsDir, previewFileName);
 
-        let fileBuf = null;
-        if (fs.existsSync(targetPath)) {
-          fileBuf = await fsp.readFile(targetPath);
-        } else if (photo.driveFileId) {
-          fileBuf = await downloadDriveFile(config, photo.driveFileId);
-          await fsp.writeFile(targetPath, fileBuf);
+        let targetPath = origPath;
+        if (kind === 'thumb') {
+          targetPath = fs.existsSync(thumbPath) ? thumbPath : origPath;
+        } else if (kind === 'preview') {
+          if (!fs.existsSync(previewPath) && fs.existsSync(origPath) && !options.disableArcFaceAutoStart && arcFaceService.hasModelsOnDisk()) {
+            try {
+              await arcFaceService.generatePreview({ imagePath: origPath, savePreviewPath: previewPath });
+              photo.previewFileName = previewFileName;
+            } catch {
+              // fallback to origPath or thumbPath below
+            }
+          }
+          targetPath = fs.existsSync(previewPath) ? previewPath : (fs.existsSync(origPath) ? origPath : thumbPath);
         }
 
-        if (!fileBuf) {
-          res.writeHead(404);
-          return res.end('File missing');
+        if (!fs.existsSync(targetPath) && photo.driveFileId) {
+          const dlBuf = await downloadDriveFile(config, photo.driveFileId);
+          await fsp.writeFile(origPath, dlBuf);
+          targetPath = origPath;
         }
 
-        const headers = {
-          'Content-Type': kind === 'thumb' ? 'image/jpeg' : (photo.mimeType || 'image/jpeg'),
-          'Content-Length': String(fileBuf.length),
-          'Cache-Control': 'public, max-age=3600'
-        };
+        const contentType = (kind === 'thumb' || (kind === 'preview' && targetPath === previewPath))
+          ? 'image/jpeg'
+          : (photo.mimeType || 'image/jpeg');
+        const downloadName = reqUrl.searchParams.get('download') === '1' ? (photo.name || `${photo.id}.jpg`) : '';
 
-        if (reqUrl.searchParams.get('download') === '1') {
-          const encodedName = encodeURIComponent(photo.name || `${photo.id}.jpg`);
-          headers['Content-Disposition'] = `attachment; filename*=UTF-8''${encodedName}`;
+        if (streamFileWithCache(req, res, targetPath, contentType, { downloadName })) {
+          return;
         }
-
-        res.writeHead(200, headers);
-        return res.end(fileBuf);
+        res.writeHead(404);
+        return res.end('File missing');
       }
 
-      // 9. POST or GET /api/photos/download-zip
+      // 9. POST or GET /api/photos/download-zip (Capped at MAX_ZIP_PHOTOS = 40 to protect RAM)
       if ((method === 'POST' || method === 'GET') && pathname === '/api/photos/download-zip') {
+        const MAX_ZIP_PHOTOS = 40;
         let ids = [];
         if (method === 'GET') {
           const rawIds = reqUrl.searchParams.get('ids') || '';
@@ -1195,9 +1587,10 @@ function createAppServer(options = {}) {
           ids = Array.isArray(body.ids) ? body.ids : [];
         }
 
-        const selectedPhotos = ids.length
+        const selectedPhotos = (ids.length
           ? db.photos.filter((p) => ids.includes(p.id))
-          : db.photos;
+          : db.photos
+        ).slice(0, MAX_ZIP_PHOTOS);
 
         if (!selectedPhotos.length) {
           return sendJson(res, 400, { ok: false, error: 'ไม่มีรูปภาพที่เลือกสำหรับดาวน์โหลด ZIP' });
@@ -1252,6 +1645,9 @@ function createAppServer(options = {}) {
         if (removed.thumbFileName) {
           await fsp.unlink(path.join(thumbsDir, removed.thumbFileName)).catch(() => {});
         }
+        if (removed.previewFileName) {
+          await fsp.unlink(path.join(previewsDir, removed.previewFileName)).catch(() => {});
+        }
         db.clusters = recomputeClusters(db.photos, db.clusters, config.clusterThreshold || DEFAULT_CLUSTER_COSINE);
         saveDb();
         return sendJson(res, 200, {
@@ -1261,14 +1657,28 @@ function createAppServer(options = {}) {
         });
       }
 
-      // 11. Static files in public/
+      // 11. Static files in public/ (Cached + Gzipped for fast Cloudflare / Mobile load)
       if (method === 'GET') {
         const relPath = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
         const safePath = path.normalize(path.join(publicDir, relPath));
         if (safePath.startsWith(publicDir) && fs.existsSync(safePath) && fs.statSync(safePath).isFile()) {
-          const content = await fsp.readFile(safePath);
-          res.writeHead(200, { 'Content-Type': mimeFromExt(safePath) });
-          return res.end(content);
+          const ct = mimeFromExt(safePath);
+          if (ct.startsWith('text/') || ct.includes('javascript')) {
+            const raw = await fsp.readFile(safePath);
+            const hdrs = { 'Content-Type': ct, 'Cache-Control': 'public, max-age=300' };
+            if (raw.length > 512 && currentAcceptEncoding.includes('gzip')) {
+              const gz = zlib.gzipSync(raw, { level: zlib.constants.Z_BEST_SPEED });
+              hdrs['Content-Encoding'] = 'gzip';
+              hdrs['Content-Length'] = String(gz.length);
+              res.writeHead(200, hdrs);
+              return res.end(gz);
+            }
+            hdrs['Content-Length'] = String(raw.length);
+            res.writeHead(200, hdrs);
+            return res.end(raw);
+          }
+          streamFileWithCache(req, res, safePath, ct, { cacheControl: 'public, max-age=86400' });
+          return;
         }
       }
 
@@ -1279,6 +1689,11 @@ function createAppServer(options = {}) {
   });
 
   server.on('close', () => {
+    if (saveTimer) clearTimeout(saveTimer);
+    if (reclusterTimer) {
+      clearTimeout(reclusterTimer);
+      reclusterTimer = null;
+    }
     arcFaceService.shutdown();
   });
 

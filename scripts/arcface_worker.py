@@ -25,6 +25,10 @@ class SCRFDDetector:
     def __init__(self, model_path, input_size=(960, 960)):
         so = ort.SessionOptions()
         so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        ort_threads = int(os.environ.get("ORT_THREADS", "0") or "0")
+        if ort_threads > 0:
+            so.intra_op_num_threads = ort_threads
+            so.inter_op_num_threads = 1
         self.session = ort.InferenceSession(model_path, sess_options=so, providers=["CPUExecutionProvider"])
         self.input_name = self.session.get_inputs()[0].name
         self.output_names = [o.name for o in self.session.get_outputs()]
@@ -147,6 +151,10 @@ class ArcFaceRecognizer:
     def __init__(self, model_path):
         so = ort.SessionOptions()
         so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        ort_threads = int(os.environ.get("ORT_THREADS", "0") or "0")
+        if ort_threads > 0:
+            so.intra_op_num_threads = ort_threads
+            so.inter_op_num_threads = 1
         self.session = ort.InferenceSession(model_path, sess_options=so, providers=["CPUExecutionProvider"])
         self.input_name = self.session.get_inputs()[0].name
         self.output_name = self.session.get_outputs()[0].name
@@ -332,7 +340,29 @@ def main():
                     if tb:
                         with open(req["saveThumbPath"], "wb") as tf:
                             tf.write(tb)
+                if req.get("savePreviewPath") and img_bgr is not None:
+                    pb = make_thumb_bytes(img_bgr, max_dim=1600)
+                    if pb:
+                        with open(req["savePreviewPath"], "wb") as pf:
+                            pf.write(pb)
                 resp = {"id": req_id, "ok": True, **res}
+            elif cmd == "make_preview":
+                img_bgr = load_bgr_from_req(req)
+                if img_bgr is None:
+                    resp = {"id": req_id, "ok": False, "error": "Cannot decode image"}
+                else:
+                    if req.get("saveThumbPath"):
+                        tb = make_thumb_bytes(img_bgr, max_dim=720)
+                        if tb:
+                            with open(req["saveThumbPath"], "wb") as tf:
+                                tf.write(tb)
+                    if req.get("savePreviewPath"):
+                        pb = make_thumb_bytes(img_bgr, max_dim=1600)
+                        if pb:
+                            with open(req["savePreviewPath"], "wb") as pf:
+                                pf.write(pb)
+                    h, w = img_bgr.shape[:2]
+                    resp = {"id": req_id, "ok": True, "width": w, "height": h}
             elif cmd == "batch_paths":
                 items = req.get("items", [])
                 results = {}
@@ -345,6 +375,11 @@ def main():
                         if tb:
                             with open(it["saveThumbPath"], "wb") as tf:
                                 tf.write(tb)
+                    if it.get("savePreviewPath") and img_bgr is not None:
+                        pb = make_thumb_bytes(img_bgr, max_dim=1600)
+                        if pb:
+                            with open(it["savePreviewPath"], "wb") as pf:
+                                pf.write(pb)
                     results[pid] = res
                 resp = {"id": req_id, "ok": True, "results": results}
             else:

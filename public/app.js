@@ -33,8 +33,9 @@ const state = {
   lanUrl: window.location.origin,
   photos: [],
   clusters: [],
+  visiblePageLimit: 40,
   selectedPhotoIds: new Set(),
-  showSinglePhotoClusters: false,
+  showAllClusters: false,
   activeClusterId: null,
   searchMatches: null,
   lastQuery: null, // { type: 'image'|'face', queryImageBase64?, sourcePhotoId?, sourceFaceIndex?, avatarUrl }
@@ -254,12 +255,12 @@ function renderClusters() {
   section.hidden = false;
 
   strip.innerHTML = '';
+  const TOP_CLUSTER_LIMIT = 40;
   const multi = state.clusters.filter((c) => c.photoCount >= 2);
-  const display = (state.clusters.length <= 16 || state.showSinglePhotoClusters || multi.length === 0)
-    ? state.clusters
-    : multi;
+  const basePool = multi.length > 0 ? multi : state.clusters;
+  const display = state.showAllClusters ? state.clusters : basePool.slice(0, TOP_CLUSTER_LIMIT);
   const hidden = state.clusters.length - display.length;
-  $('statTotalClusters').textContent = display.length;
+  $('statTotalClusters').textContent = state.clusters.length;
 
   for (const cluster of display) {
     const isActive = state.activeClusterId === cluster.id;
@@ -305,17 +306,17 @@ function renderClusters() {
     strip.appendChild(item);
   }
 
-  if (hidden > 0 || (state.showSinglePhotoClusters && state.clusters.length > 16)) {
+  if (hidden > 0 || (state.showAllClusters && state.clusters.length > 40)) {
     const more = document.createElement('div');
     more.className = 'cluster-item';
     more.innerHTML = `
       <div class="cluster-avatar-wrap" style="display:flex;align-items:center;justify-content:center;background:var(--pink-50);color:var(--pink-600);font-weight:600;font-size:0.78rem;">
-        ${state.showSinglePhotoClusters ? 'ย่อ' : `+${hidden}`}
+        ${state.showAllClusters ? 'ย่อ' : `+${hidden}`}
       </div>
-      <div class="cluster-label">${state.showSinglePhotoClusters ? 'ซ่อนรูปเดี่ยว' : 'ดูทั้งหมด'}</div>
+      <div class="cluster-label">${state.showAllClusters ? 'แสดงเฉพาะพบบ่อย' : 'ดูเพิ่มเติม'}</div>
     `;
     more.addEventListener('click', () => {
-      state.showSinglePhotoClusters = !state.showSinglePhotoClusters;
+      state.showAllClusters = !state.showAllClusters;
       renderClusters();
     });
     strip.appendChild(more);
@@ -461,6 +462,7 @@ function clearAllFilters() {
   state.lastQuery = null;
   state.lastSearchMeta = null;
   state.extraFriends = [];
+  state.visiblePageLimit = 40;
   $('fileInputQueryFace').value = '';
   $('fileInputSelfieCapture').value = '';
   syncFilterBannerUI();
@@ -577,10 +579,13 @@ function renderPhotoGrid() {
 
   const grid = $('photoGrid');
   const empty = $('emptyState');
+  const loadMoreWrap = $('loadMoreWrap');
+  const loadMoreBtn = $('btnLoadMorePhotos');
   grid.innerHTML = '';
 
   if (!visible.length) {
     empty.hidden = false;
+    if (loadMoreWrap) loadMoreWrap.hidden = true;
     empty.textContent = (state.searchMatches || state.activeClusterId)
       ? 'ไม่พบรูปที่ตรงกับการค้นหา (ลองเลื่อนความเข้มงวดลง หรือใช้รูปที่เห็นหน้าชัดขึ้น)'
       : 'ยังไม่มีรูปภาพในอัลบั้ม';
@@ -589,7 +594,19 @@ function renderPhotoGrid() {
   }
   empty.hidden = true;
 
-  for (const photo of visible) {
+  const limit = state.visiblePageLimit || 40;
+  const sliced = visible.slice(0, limit);
+  const remaining = visible.length - sliced.length;
+  if (loadMoreWrap && loadMoreBtn) {
+    if (remaining > 0) {
+      loadMoreBtn.textContent = `⬇️ ดูรูปเพิ่มเติม (อีก ${remaining} รูป)`;
+      loadMoreWrap.hidden = false;
+    } else {
+      loadMoreWrap.hidden = true;
+    }
+  }
+
+  for (const photo of sliced) {
     const isSelected = state.selectedPhotoIds.has(photo.id);
     const card = document.createElement('div');
     card.className = `photo-card${isSelected ? ' selected' : ''}`;
@@ -637,43 +654,54 @@ async function handleUploadFiles(fileList, sourceLabel = 'web_upload') {
   const bar = $('uploadProgressBar');
   box.hidden = false;
   bar.style.width = '3%';
-  let failed = 0;
 
-  for (let i = 0; i < files.length; i++) {
-    const file = files[i];
-    bar.style.width = `${Math.round(((i + 0.3) / files.length) * 100)}%`;
-    text.textContent = `กำลังอัปโหลดและสแกนใบหน้า (${i + 1}/${files.length}): ${file.name}`;
-    try {
-      const [dataBase64, img] = await Promise.all([fileToDataUrl(file), loadImage(file)]);
-      const thumbBase64 = downscaleToDataUrl(img, 720, 0.84);
-      const resp = await fetch('/api/photos/upload', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          files: [{
-            name: file.name,
-            mimeType: file.type || 'image/jpeg',
-            width: img.naturalWidth || img.width,
-            height: img.naturalHeight || img.height,
-            source: sourceLabel,
-            dataBase64,
-            thumbBase64
-          }]
-        })
-      }).then((r) => r.json());
-      if (!resp.ok) failed++;
-    } catch (err) {
-      failed++;
-      console.error(`Upload failed for ${file.name}:`, err);
+  let completed = 0;
+  let failed = 0;
+  let cursor = 0;
+  const CONCURRENCY = Math.min(3, files.length);
+
+  const worker = async () => {
+    while (cursor < files.length) {
+      const idx = cursor++;
+      const file = files[idx];
+      text.textContent = `กำลังอัปโหลดและสแกนใบหน้า (${completed + 1}/${files.length}): ${file.name}`;
+      try {
+        const qs = new URLSearchParams({
+          name: file.name,
+          mimeType: file.type || 'image/jpeg',
+          source: sourceLabel,
+          deferCluster: files.length > 1 ? '1' : '0'
+        });
+        const resp = await fetch(`/api/photos/upload-binary?${qs.toString()}`, {
+          method: 'POST',
+          headers: { 'Content-Type': file.type || 'application/octet-stream' },
+          body: file
+        }).then((r) => r.json());
+        if (!resp.ok) failed++;
+      } catch (err) {
+        failed++;
+        console.error(`Upload failed for ${file.name}:`, err);
+      } finally {
+        completed++;
+        bar.style.width = `${Math.round((completed / files.length) * 100)}%`;
+        text.textContent = `อัปโหลดแล้ว ${completed}/${files.length} รูป...`;
+      }
     }
+  };
+
+  await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
+
+  if (files.length > 1) {
+    text.textContent = 'กำลังจัดกลุ่มใบหน้า...';
+    await fetch('/api/photos/recluster', { method: 'POST' }).catch(() => {});
   }
 
   bar.style.width = '100%';
   text.textContent = failed
-    ? `เสร็จสิ้น (สำเร็จ ${files.length - failed} / ล้มเหลว ${failed})`
-    : `อัปโหลดและสแกนใบหน้าสำเร็จ ${files.length} รูป`;
+    ? `เสร็จสิ้น (สำเร็จ ${files.length - failed} / ล้มเหลว ${failed}) • ซิงก์ Google Drive ต่อเบื้องหลัง`
+    : `อัปโหลดและสแกนใบหน้าสำเร็จ ${files.length} รูป • ซิงก์ Google Drive เบื้องหลัง`;
   await fetchStatusAndPhotos();
-  setTimeout(() => { box.hidden = true; }, 2200);
+  setTimeout(() => { box.hidden = true; }, 2600);
 }
 
 // ============================================================================
@@ -882,9 +910,25 @@ function openLightbox(photo) {
   };
 
   img.onload = drawFaces;
-  img.src = photo.fileUrl;
+  img.src = photo.previewUrl || photo.fileUrl;
   if (img.complete) drawFaces();
   $('lightboxModal').hidden = false;
+
+  if (photo.faceCount > 0 && !Array.isArray(photo.faces)) {
+    fetch(`/api/photos/${encodeURIComponent(photo.id)}/faces`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data && data.ok && Array.isArray(data.faces)) {
+          photo.faces = data.faces;
+          if (data.width) photo.width = data.width;
+          if (data.height) photo.height = data.height;
+          if (state.currentLightboxPhoto && state.currentLightboxPhoto.id === photo.id && img.complete) {
+            drawFaces();
+          }
+        }
+      })
+      .catch(() => {});
+  }
 }
 
 // ============================================================================
@@ -1067,8 +1111,12 @@ function renderQrModal() {
 }
 
 async function downloadSelectedAsZip() {
-  const ids = Array.from(state.selectedPhotoIds);
+  let ids = Array.from(state.selectedPhotoIds);
   if (!ids.length) return;
+  if (ids.length > 40) {
+    window.alert('ดาวน์โหลด ZIP ได้ครั้งละไม่เกิน 40 รูป ระบบจะดาวน์โหลด 40 รูปแรกให้ก่อนครับ');
+    ids = ids.slice(0, 40);
+  }
   const btn = $('btnDownloadZip');
   const orig = btn.innerHTML;
   btn.disabled = true;
@@ -1613,6 +1661,12 @@ window.addEventListener('DOMContentLoaded', async () => {
     renderPhotoGrid();
   });
   $('btnDownloadZip').addEventListener('click', downloadSelectedAsZip);
+  if ($('btnLoadMorePhotos')) {
+    $('btnLoadMorePhotos').addEventListener('click', () => {
+      state.visiblePageLimit = (state.visiblePageLimit || 40) + 40;
+      renderPhotoGrid();
+    });
+  }
 
   document.querySelectorAll('[data-close-modal]').forEach((btn) => {
     btn.addEventListener('click', () => { const el = $(btn.getAttribute('data-close-modal')); if (el) el.hidden = true; });

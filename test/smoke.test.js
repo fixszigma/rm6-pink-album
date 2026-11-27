@@ -84,15 +84,41 @@ async function apiTests() {
     const up = await post('/api/photos/upload', {
       files: [
         { name: 'g1.jpg', mimeType: 'image/jpeg', dataBase64: SAMPLE_JPEG_BASE64, thumbBase64: SAMPLE_JPEG_BASE64,
-          faces: [{ descriptor: A1, box: { x: 1, y: 1, width: 60, height: 60 } }, { descriptor: B, box: { x: 90, y: 1, width: 60, height: 60 } }] },
+          faces: [{ descriptor: A1, box: { x: 1, y: 1, width: 60, height: 60 }, avatarDataUrl: SAMPLE_JPEG_BASE64 }, { descriptor: B, box: { x: 90, y: 1, width: 60, height: 60 }, avatarDataUrl: SAMPLE_JPEG_BASE64 }] },
         { name: 'g2.jpg', mimeType: 'image/jpeg', dataBase64: SAMPLE_JPEG_BASE64, thumbBase64: SAMPLE_JPEG_BASE64,
-          faces: [{ descriptor: A2, box: { x: 5, y: 5, width: 60, height: 60 } }] }
+          faces: [{ descriptor: A2, box: { x: 5, y: 5, width: 60, height: 60 }, avatarDataUrl: SAMPLE_JPEG_BASE64 }] }
       ]
     });
     assert.equal(up.ok, true);
     assert.equal(up.clusters.length, 2);
     assert.equal(up.clusters[0].photoCount, 2);
-    console.log('  ✅ 3. 512-D clustering: group photo split, same person merged');
+    assert.ok(up.clusters[0].avatarDataUrl.startsWith('/api/avatars/'), 'avatar extracted to disk URL');
+
+    // Pagination + omitted faces + lazy /faces + avatar & preview ETag streaming + binary upload
+    const paged = await (await fetch(`${base}/api/photos?limit=1&offset=0`)).json();
+    assert.equal(paged.photos.length, 1);
+    assert.equal(paged.totalFiltered, 2);
+    assert.equal(paged.hasMore, true);
+    assert.equal(paged.photos[0].faces, undefined, 'faces stripped from /api/photos list');
+
+    const lazyFaces = await (await fetch(`${base}/api/photos/${up.addedPhotos[0].id}/faces`)).json();
+    assert.equal(lazyFaces.ok, true);
+    assert.ok(Array.isArray(lazyFaces.faces) && lazyFaces.faces.length > 0);
+
+    const avResp = await fetch(`${base}${up.clusters[0].avatarDataUrl}`);
+    assert.equal(avResp.status, 200);
+    const etag = avResp.headers.get('etag');
+    assert.ok(etag, 'ETag header set on streamed avatar');
+    const av304 = await fetch(`${base}${up.clusters[0].avatarDataUrl}`, { headers: { 'If-None-Match': etag } });
+    assert.equal(av304.status, 304, '304 Not Modified works with ETag');
+
+    const sampleBin = Buffer.from(SAMPLE_JPEG_BASE64.split(',')[1], 'base64');
+    const binUp = await (await fetch(`${base}/api/photos/upload-binary?name=bin1.jpg&mimeType=image/jpeg`, {
+      method: 'POST', headers: { 'Content-Type': 'image/jpeg' }, body: sampleBin
+    })).json();
+    assert.equal(binUp.ok, true);
+    assert.ok(binUp.photo.previewUrl.includes('/preview'));
+    console.log('  ✅ 3. 512-D clustering, disk avatars, pagination, ETag 304 & binary upload verified');
 
     // 4. Search by descriptor (ArcFace cosine)
     const s = await post('/api/faces/search', { descriptors: [unitVec(10, 0.08)], threshold: 0.40, engineMode: 'arcface' });
